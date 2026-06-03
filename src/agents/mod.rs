@@ -1,4 +1,7 @@
 pub mod claude_code;
+pub mod codex;
+pub mod opencode;
+pub mod pi;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -67,7 +70,12 @@ pub trait Agent: Send + Sync {
 /// Returns all supported agents in detection priority order.
 /// Detection order: ClaudeCode → Codex → OpenCode → Pi
 pub fn all_agents() -> Vec<Box<dyn Agent>> {
-    vec![Box::new(claude_code::ClaudeCodeAgent)]
+    vec![
+        Box::new(claude_code::ClaudeCodeAgent),
+        Box::new(codex::CodexAgent),
+        Box::new(opencode::OpenCodeAgent),
+        Box::new(pi::PiAgent),
+    ]
 }
 
 #[cfg(test)]
