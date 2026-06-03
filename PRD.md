@@ -498,9 +498,46 @@ Note: `--week` and `--month` are rolling windows (last N days), not calendar wee
 
 ## Distribution
 
-- **Homebrew**: tap at `hefgi/homebrew-tap` (https://github.com/hefgi/homebrew-tap), formula wrapping the GitHub release binary
-- **Cargo**: published to crates.io
-- **GitHub Releases**: pre-built binaries for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`
+- **Homebrew**: tap at `hefgi/homebrew-tap` (https://github.com/hefgi/homebrew-tap), formula auto-updated on release
+- **Cargo**: published to crates.io on release
+- **GitHub Releases**: pre-built binaries for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`
+
+## CI / CD
+
+Three GitHub Actions workflows, mirroring the ecluse setup:
+
+### `ci.yml` — runs on every push and PR
+- `cargo build`
+- `cargo clippy -- -D warnings`
+- `cargo fmt --check`
+- `cargo test`
+- Matrix: `ubuntu-latest` + `macos-latest`
+
+### `release.yml` — triggers on `v*.*.*` tags
+1. **Build** — cross-compiles for all 4 targets in parallel
+2. **Release** — creates GitHub release with binaries, extracts changelog section from `CHANGELOG.md`
+3. **publish-crates** — publishes to crates.io (requires `CARGO_REGISTRY_TOKEN` secret)
+4. **update-homebrew** — updates `Formula/suivi.rb` in `hefgi/homebrew-tap` (requires `HOMEBREW_TAP_TOKEN` secret)
+
+### `docs.yml` — triggers on pushes to `docs/**`
+- Builds mdBook and deploys to GitHub Pages at `hefgi.github.io/suivi`
+- Generates `llms.txt` and `llms-full.txt` for LLM consumption
+
+## Documentation
+
+Built with **mdBook**, deployed via GitHub Pages to `https://hefgi.github.io/suivi`.
+
+Source lives in `docs/src/`. Pages:
+- Introduction
+- Install
+- Quick start
+- Configuration
+- Commands
+- Agents (supported agents + contributor guide)
+- How time is measured (wall-clock vs accumulated, buffer cap)
+- Contributing
+
+Includes `llms.txt` and `llms-full.txt` generated at build time for LLM-friendly consumption of the docs.
 
 ---
 

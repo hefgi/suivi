@@ -1,0 +1,19 @@
+[book]
+title = "suivi"
+description = "Track time spent working with AI coding agents across multiple projects"
+authors = ["Hefgi"]
+language = "en"
+src = "src"
+
+[output.html]
+site-url = "/"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/hefgi/suivi"
+no-section-label = true
+edit-url-template = "https://github.com/hefgi/suivi/edit/main/docs/src/{path}"
+additional-css = ["theme/custom.css"]
+
+[output.html.fold]
+enable = true
+level = 1
