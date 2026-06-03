@@ -1,4 +1,4 @@
-use crate::{agents, config, db};
+use crate::{config, db};
 use chrono::Utc;
 use std::io::Read;
 
@@ -14,23 +14,16 @@ fn run() -> Result<(), anyhow::Error> {
         return Ok(());
     }
 
-    let env = agents::Env::capture();
-    let all = agents::all_agents();
-    let agent = all.iter().find(|a| a.detect(&env));
-    let agent = match agent {
-        Some(a) => a,
+    // Stop payloads don't include cwd — read session_id and duration_ms directly.
+    let v: serde_json::Value = match serde_json::from_str(&stdin) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    let session_id = match v.get("session_id").and_then(|s| s.as_str()) {
+        Some(s) => s.to_string(),
         None => return Ok(()),
     };
-
-    let payload = match agent.parse_payload(&stdin) {
-        Some(p) => p,
-        None => return Ok(()),
-    };
-
-    // Extract duration_ms from raw JSON (may not be in AgentPayload struct)
-    let duration_ms: Option<f64> = serde_json::from_str::<serde_json::Value>(&stdin)
-        .ok()
-        .and_then(|v| v.get("duration_ms").and_then(|d| d.as_f64()));
+    let duration_ms: Option<f64> = v.get("duration_ms").and_then(|d| d.as_f64());
 
     let config = config::load().unwrap_or_default();
     let buffer_secs = config.buffer_mins as f64 * 60.0;
@@ -38,7 +31,7 @@ fn run() -> Result<(), anyhow::Error> {
     let effective_duration_secs = buffer_secs + agent_duration_secs + buffer_secs;
 
     let conn = db::open()?;
-    let open_turn = match db::last_open_turn(&conn, &payload.session_id)? {
+    let open_turn = match db::last_open_turn(&conn, &session_id)? {
         Some(t) => t,
         None => return Ok(()),
     };
