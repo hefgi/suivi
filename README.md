@@ -58,14 +58,32 @@ Creates `~/.config/suivi/config.toml`, detects installed agents, and registers h
 ## Usage
 
 ```bash
-suivi stats                    # today, this week, all time
-suivi stats --graph            # daily graph — last 30 days
-suivi stats --daily            # day-by-day breakdown
-suivi stats --history          # recent turns (today by default)
-suivi stats --projects         # cross-project comparison
-suivi stats --project <name>   # drill into one project
+# Initialize and install hooks for all detected agents
+suivi init
+
+# View time stats
+suivi stats              # today + this week + all time
+suivi stats --projects   # per-project breakdown
+suivi stats --graph      # ASCII activity graph (last 30 days)
+suivi stats --daily      # daily table
+suivi stats --history    # turn-by-turn history
+suivi stats --all        # all-time view (no date window)
+
+# Filter by project or agent
+suivi stats --project <path>   # drill into one project
 suivi stats --agent <name>     # drill into one agent
-suivi status                   # hook health + untracked activity
+
+# Machine-readable output
+suivi stats --format json
+suivi stats --format csv
+
+# Check hook health
+suivi status
+
+# Database maintenance
+suivi doctor             # show stale turn counts
+suivi doctor --prune     # delete stale turns and expired turns
+suivi doctor --check     # SQLite integrity check
 ```
 
 ## Configuration
