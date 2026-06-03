@@ -55,11 +55,12 @@ pub fn wall_clock_secs(turns: &[TurnRow], buffer_mins: u32) -> f64 {
 /// Compute accumulated seconds for a set of turns.
 /// Sums effective_duration_secs for all completed turns.
 pub fn accumulated_secs(turns: &[TurnRow]) -> f64 {
-    turns
+    let total: f64 = turns
         .iter()
         .filter(|t| t.ended_at.is_some())
         .filter_map(|t| t.effective_duration_secs)
-        .sum()
+        .sum();
+    total.max(0.0)
 }
 
 /// Format seconds as human-readable duration: "1h 23m" or "45m" or "< 1m"

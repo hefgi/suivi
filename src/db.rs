@@ -101,11 +101,10 @@ pub fn stop_turn(conn: &Connection, id: i64, stop: &TurnStop) -> Result<bool, Su
     Ok(rows > 0)
 }
 
+#[allow(dead_code)]
 pub struct LastOpenTurn {
     pub id: i64,
-    #[allow(dead_code)]
     pub started_at: String,
-    #[allow(dead_code)]
     pub agent_duration_secs: Option<f64>,
 }
 
@@ -132,11 +131,11 @@ pub fn last_open_turn(
     }
 }
 
+#[allow(dead_code)]
 pub struct LastEndedTurn {
     pub id: i64,
     pub ended_at: String,
     pub agent_duration_secs: Option<f64>,
-    #[allow(dead_code)]
     pub effective_duration_secs: Option<f64>,
 }
 
@@ -180,19 +179,17 @@ pub const STALE_FILTER: &str =
     "NOT (ended_at IS NULL AND (julianday('now') - julianday(started_at)) * 86400.0 > 7200)";
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct TurnRow {
-    #[allow(dead_code)]
     pub id: i64,
     pub session_id: String,
     pub started_at: String,
     pub ended_at: Option<String>,
     pub project_path: Option<String>,
     pub project_name: Option<String>,
-    #[allow(dead_code)]
     pub cwd: String,
     pub agent: String,
     pub model: Option<String>,
-    #[allow(dead_code)]
     pub agent_duration_secs: Option<f64>,
     pub effective_duration_secs: Option<f64>,
 }
