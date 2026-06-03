@@ -4,11 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::db;
 
-pub fn run(
-    since: Option<&str>,
-    project: Option<&str>,
-    agent_filter: Option<&str>,
-) -> Result<()> {
+pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
     let conn = db::open()?;
     let turns = db::query_turns(&conn, since, project, agent_filter)?;
 

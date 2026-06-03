@@ -52,6 +52,7 @@ pub fn load() -> Result<Config, SuiviError> {
     Ok(config)
 }
 
+#[allow(dead_code)]
 pub fn load_from(path: &Path) -> Result<Config, SuiviError> {
     if !path.exists() {
         return Ok(Config::default());

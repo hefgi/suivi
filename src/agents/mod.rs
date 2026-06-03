@@ -51,6 +51,7 @@ pub enum HookDest {
 
 pub struct HookFile {
     pub dest: HookDest,
+    #[allow(dead_code)]
     pub filename: String,
     pub content: String,
 }

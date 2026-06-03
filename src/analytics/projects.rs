@@ -31,30 +31,28 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
     let mut projects: Vec<(String, Vec<usize>)> = by_project.into_iter().collect();
     // Sort by accumulated time descending
     projects.sort_by(|a, b| {
-        let a_acc: f64 = a
-            .1
-            .iter()
-            .filter_map(|&i| {
-                let t = &turns[i];
-                if t.ended_at.is_some() {
-                    t.effective_duration_secs
-                } else {
-                    None
-                }
-            })
-            .sum();
-        let b_acc: f64 = b
-            .1
-            .iter()
-            .filter_map(|&i| {
-                let t = &turns[i];
-                if t.ended_at.is_some() {
-                    t.effective_duration_secs
-                } else {
-                    None
-                }
-            })
-            .sum();
+        let a_acc: f64 =
+            a.1.iter()
+                .filter_map(|&i| {
+                    let t = &turns[i];
+                    if t.ended_at.is_some() {
+                        t.effective_duration_secs
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+        let b_acc: f64 =
+            b.1.iter()
+                .filter_map(|&i| {
+                    let t = &turns[i];
+                    if t.ended_at.is_some() {
+                        t.effective_duration_secs
+                    } else {
+                        None
+                    }
+                })
+                .sum();
         b_acc
             .partial_cmp(&a_acc)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -85,11 +83,8 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
                 .iter()
                 .filter_map(|&i| {
                     let t = &turns[i];
-                    if t.ended_at.is_none() {
-                        return None;
-                    }
-                    let start =
-                        chrono::DateTime::parse_from_rfc3339(&t.started_at).ok()?;
+                    t.ended_at.as_ref()?;
+                    let start = chrono::DateTime::parse_from_rfc3339(&t.started_at).ok()?;
                     let end = chrono::DateTime::parse_from_rfc3339(t.ended_at.as_ref()?).ok()?;
                     Some((
                         start.with_timezone(&chrono::Utc) - buffer,

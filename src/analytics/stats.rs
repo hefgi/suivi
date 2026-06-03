@@ -24,9 +24,7 @@ pub fn run(
         let today_start = now
             .date_naive()
             .and_hms_opt(0, 0, 0)
-            .map(|dt| {
-                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
-            })
+            .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
             .map(|dt| dt.to_rfc3339());
         let week_start = (now - chrono::Duration::days(7)).to_rfc3339();
         vec![

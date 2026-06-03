@@ -21,6 +21,7 @@ pub fn open() -> Result<Connection, SuiviError> {
     Ok(conn)
 }
 
+#[allow(dead_code)]
 pub fn open_at(path: &std::path::Path) -> Result<Connection, SuiviError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -102,7 +103,9 @@ pub fn stop_turn(conn: &Connection, id: i64, stop: &TurnStop) -> Result<bool, Su
 
 pub struct LastOpenTurn {
     pub id: i64,
+    #[allow(dead_code)]
     pub started_at: String,
+    #[allow(dead_code)]
     pub agent_duration_secs: Option<f64>,
 }
 
@@ -133,6 +136,7 @@ pub struct LastEndedTurn {
     pub id: i64,
     pub ended_at: String,
     pub agent_duration_secs: Option<f64>,
+    #[allow(dead_code)]
     pub effective_duration_secs: Option<f64>,
 }
 
@@ -177,15 +181,18 @@ pub const STALE_FILTER: &str =
 
 #[derive(Clone)]
 pub struct TurnRow {
+    #[allow(dead_code)]
     pub id: i64,
     pub session_id: String,
     pub started_at: String,
     pub ended_at: Option<String>,
     pub project_path: Option<String>,
     pub project_name: Option<String>,
+    #[allow(dead_code)]
     pub cwd: String,
     pub agent: String,
     pub model: Option<String>,
+    #[allow(dead_code)]
     pub agent_duration_secs: Option<f64>,
     pub effective_duration_secs: Option<f64>,
 }

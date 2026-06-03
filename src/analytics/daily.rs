@@ -6,11 +6,7 @@ use crate::{config, db};
 
 use super::format_duration;
 
-pub fn run(
-    since: Option<&str>,
-    project: Option<&str>,
-    agent_filter: Option<&str>,
-) -> Result<()> {
+pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
     let conn = db::open()?;
     let turns = db::query_turns(&conn, since, project, agent_filter)?;
@@ -47,11 +43,8 @@ pub fn run(
                 .iter()
                 .filter_map(|&i| {
                     let t = &turns[i];
-                    if t.ended_at.is_none() {
-                        return None;
-                    }
-                    let start =
-                        chrono::DateTime::parse_from_rfc3339(&t.started_at).ok()?;
+                    t.ended_at.as_ref()?;
+                    let start = chrono::DateTime::parse_from_rfc3339(&t.started_at).ok()?;
                     let end = chrono::DateTime::parse_from_rfc3339(t.ended_at.as_ref()?).ok()?;
                     Some((
                         start.with_timezone(&chrono::Utc) - buffer,
