@@ -175,6 +175,7 @@ pub fn correct_effective_duration(
 pub const STALE_FILTER: &str =
     "NOT (ended_at IS NULL AND (julianday('now') - julianday(started_at)) * 86400.0 > 7200)";
 
+#[derive(Clone)]
 pub struct TurnRow {
     pub id: i64,
     pub session_id: String,
