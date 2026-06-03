@@ -98,8 +98,7 @@ mod tests {
     #[test]
     fn test_parse_payload_valid() {
         let agent = ClaudeCodeAgent;
-        let json =
-            r#"{"session_id":"sess1","cwd":"/home/user","model":"claude-3-5-sonnet","hook_event_name":"UserPromptSubmit"}"#;
+        let json = r#"{"session_id":"sess1","cwd":"/home/user","model":"claude-3-5-sonnet","hook_event_name":"UserPromptSubmit"}"#;
         let payload = agent.parse_payload(json);
         assert!(payload.is_some());
         let p = payload.unwrap();
