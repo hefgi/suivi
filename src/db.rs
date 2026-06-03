@@ -1,10 +1,12 @@
-use rusqlite::{Connection, params};
-use std::path::PathBuf;
 use crate::error::SuiviError;
+use rusqlite::{params, Connection};
+use std::path::PathBuf;
 
 pub fn db_path() -> PathBuf {
     dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share"))
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share")
+        })
         .join("suivi")
         .join("history.db")
 }
@@ -88,7 +90,12 @@ pub fn stop_turn(conn: &Connection, id: i64, stop: &TurnStop) -> Result<bool, Su
     let rows = conn.execute(
         "UPDATE turns SET ended_at = ?1, agent_duration_secs = ?2, effective_duration_secs = ?3
          WHERE id = ?4 AND ended_at IS NULL",
-        params![stop.ended_at, stop.agent_duration_secs, stop.effective_duration_secs, id],
+        params![
+            stop.ended_at,
+            stop.agent_duration_secs,
+            stop.effective_duration_secs,
+            id
+        ],
     )?;
     Ok(rows > 0)
 }
@@ -99,7 +106,10 @@ pub struct LastOpenTurn {
     pub agent_duration_secs: Option<f64>,
 }
 
-pub fn last_open_turn(conn: &Connection, session_id: &str) -> Result<Option<LastOpenTurn>, SuiviError> {
+pub fn last_open_turn(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Option<LastOpenTurn>, SuiviError> {
     let mut stmt = conn.prepare(
         "SELECT id, started_at, agent_duration_secs FROM turns
          WHERE session_id = ?1 AND ended_at IS NULL
@@ -126,7 +136,10 @@ pub struct LastEndedTurn {
     pub effective_duration_secs: Option<f64>,
 }
 
-pub fn last_ended_turn(conn: &Connection, session_id: &str) -> Result<Option<LastEndedTurn>, SuiviError> {
+pub fn last_ended_turn(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Option<LastEndedTurn>, SuiviError> {
     let mut stmt = conn.prepare(
         "SELECT id, ended_at, agent_duration_secs, effective_duration_secs FROM turns
          WHERE session_id = ?1 AND ended_at IS NOT NULL
@@ -147,7 +160,11 @@ pub fn last_ended_turn(conn: &Connection, session_id: &str) -> Result<Option<Las
     }
 }
 
-pub fn correct_effective_duration(conn: &Connection, id: i64, new_effective: f64) -> Result<(), SuiviError> {
+pub fn correct_effective_duration(
+    conn: &Connection,
+    id: i64,
+    new_effective: f64,
+) -> Result<(), SuiviError> {
     conn.execute(
         "UPDATE turns SET effective_duration_secs = ?1 WHERE id = ?2",
         params![new_effective, id],
@@ -203,24 +220,21 @@ pub fn query_turns(
 
     // Build query with dynamic parameters
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(
-        rusqlite::params_from_iter(param_values.iter()),
-        |row| {
-            Ok(TurnRow {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                started_at: row.get(2)?,
-                ended_at: row.get(3)?,
-                project_path: row.get(4)?,
-                project_name: row.get(5)?,
-                cwd: row.get(6)?,
-                agent: row.get(7)?,
-                model: row.get(8)?,
-                agent_duration_secs: row.get(9)?,
-                effective_duration_secs: row.get(10)?,
-            })
-        },
-    )?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(param_values.iter()), |row| {
+        Ok(TurnRow {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            started_at: row.get(2)?,
+            ended_at: row.get(3)?,
+            project_path: row.get(4)?,
+            project_name: row.get(5)?,
+            cwd: row.get(6)?,
+            agent: row.get(7)?,
+            model: row.get(8)?,
+            agent_duration_secs: row.get(9)?,
+            effective_duration_secs: row.get(10)?,
+        })
+    })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(SuiviError::Db)
 }
 
@@ -243,7 +257,10 @@ pub fn delete_stale(conn: &Connection) -> Result<u64, SuiviError> {
 
 pub fn count_beyond_retention(conn: &Connection, retention_days: u32) -> Result<u64, SuiviError> {
     let count: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM turns WHERE started_at < datetime('now', '-{} days')", retention_days),
+        &format!(
+            "SELECT COUNT(*) FROM turns WHERE started_at < datetime('now', '-{} days')",
+            retention_days
+        ),
         [],
         |row| row.get(0),
     )?;
@@ -252,7 +269,10 @@ pub fn count_beyond_retention(conn: &Connection, retention_days: u32) -> Result<
 
 pub fn delete_beyond_retention(conn: &Connection, retention_days: u32) -> Result<u64, SuiviError> {
     let rows = conn.execute(
-        &format!("DELETE FROM turns WHERE started_at < datetime('now', '-{} days')", retention_days),
+        &format!(
+            "DELETE FROM turns WHERE started_at < datetime('now', '-{} days')",
+            retention_days
+        ),
         [],
     )?;
     Ok(rows as u64)
@@ -289,7 +309,18 @@ mod tests {
             project_path: Some("/home/user/project"),
             project_name: Some("My Project"),
         };
-        insert_turn(&conn, &turn).unwrap();
+        let id = insert_turn(&conn, &turn).unwrap();
+        // Close the turn so it is not filtered by the stale-open-turn filter
+        stop_turn(
+            &conn,
+            id,
+            &TurnStop {
+                ended_at: "2024-01-01T10:30:00Z".to_string(),
+                agent_duration_secs: 10.0,
+                effective_duration_secs: 610.0,
+            },
+        )
+        .unwrap();
         let rows = query_turns(&conn, None, None, None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].session_id, "sess1");
@@ -471,11 +502,16 @@ mod tests {
         };
         // Insert with ended_at so it's not stale
         let id = insert_turn(&conn, &turn).unwrap();
-        stop_turn(&conn, id, &TurnStop {
-            ended_at: "2020-01-01T00:05:00Z".to_string(),
-            agent_duration_secs: 10.0,
-            effective_duration_secs: 610.0,
-        }).unwrap();
+        stop_turn(
+            &conn,
+            id,
+            &TurnStop {
+                ended_at: "2020-01-01T00:05:00Z".to_string(),
+                agent_duration_secs: 10.0,
+                effective_duration_secs: 610.0,
+            },
+        )
+        .unwrap();
         let count = count_beyond_retention(&conn, 30).unwrap();
         assert!(count >= 1);
     }
@@ -494,11 +530,16 @@ mod tests {
                 project_name: None,
             };
             let id = insert_turn(&conn, &turn).unwrap();
-            stop_turn(&conn, id, &TurnStop {
-                ended_at: "2024-06-01T10:05:00Z".to_string(),
-                agent_duration_secs: 30.0,
-                effective_duration_secs: 630.0,
-            }).unwrap();
+            stop_turn(
+                &conn,
+                id,
+                &TurnStop {
+                    ended_at: "2024-06-01T10:05:00Z".to_string(),
+                    agent_duration_secs: 30.0,
+                    effective_duration_secs: 630.0,
+                },
+            )
+            .unwrap();
         }
         let rows = query_turns(&conn, None, Some("/proj/a"), None).unwrap();
         assert_eq!(rows.len(), 1);

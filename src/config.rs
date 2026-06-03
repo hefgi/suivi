@@ -1,6 +1,6 @@
+use crate::error::SuiviError;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use crate::error::SuiviError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectEntry {
@@ -18,8 +18,12 @@ pub struct Config {
     pub projects: Vec<ProjectEntry>,
 }
 
-fn default_buffer_mins() -> u32 { 5 }
-fn default_retention_days() -> u32 { 90 }
+fn default_buffer_mins() -> u32 {
+    5
+}
+fn default_retention_days() -> u32 {
+    90
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -84,20 +88,29 @@ fn expand_tilde(s: &str) -> String {
     s.to_string()
 }
 
+fn has_glob_chars(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
+
 pub fn expand_globs(entry: &ProjectEntry) -> Vec<PathBuf> {
     let mut results = Vec::new();
     for pattern in &entry.paths {
         let expanded = expand_tilde(pattern);
-        match glob::glob(&expanded) {
-            Ok(paths) => {
-                for path in paths.flatten() {
-                    results.push(path);
+        if has_glob_chars(&expanded) {
+            match glob::glob(&expanded) {
+                Ok(paths) => {
+                    for path in paths.flatten() {
+                        results.push(path);
+                    }
+                }
+                Err(_) => {
+                    // If glob fails, treat as literal path
+                    results.push(PathBuf::from(&expanded));
                 }
             }
-            Err(_) => {
-                // If glob fails, treat as literal path
-                results.push(PathBuf::from(&expanded));
-            }
+        } else {
+            // No glob characters: treat as literal path regardless of existence
+            results.push(PathBuf::from(&expanded));
         }
     }
     results.sort();

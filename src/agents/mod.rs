@@ -10,7 +10,10 @@ impl Env {
     pub fn capture() -> Self {
         let vars: HashMap<String, String> = std::env::vars().collect();
         let parent_process_name = Self::detect_parent();
-        Self { vars, parent_process_name }
+        Self {
+            vars,
+            parent_process_name,
+        }
     }
 
     fn detect_parent() -> Option<String> {
@@ -20,7 +23,11 @@ impl Env {
             .output()
             .ok()?;
         let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if name.is_empty() { None } else { Some(name) }
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
     }
 }
 
