@@ -1,6 +1,7 @@
 #[allow(dead_code)]
 mod agents;
 mod cli;
+#[allow(dead_code)]
 mod commands;
 #[allow(dead_code)]
 mod config;
