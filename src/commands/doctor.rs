@@ -6,7 +6,8 @@ use crate::{config, db};
 pub fn run(prune: bool, check: bool) -> Result<()> {
     let conn = db::open()?;
 
-    if check {
+    // Always show integrity status (--check is kept for backwards compat but no longer needed)
+    if check || !prune {
         println!("{}", "Integrity check".bold());
         let result: String = conn
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
