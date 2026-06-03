@@ -1,3 +1,9 @@
 {
-  "Stop": [{"command": "suivi hook stop"}]
+  "hooks": {
+    "Stop": [
+      {
+        "command": "suivi hook stop"
+      }
+    ]
+  }
 }

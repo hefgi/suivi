@@ -1,3 +1,9 @@
 {
-  "UserPromptSubmit": [{"command": "suivi hook pre"}]
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "command": "suivi hook pre"
+      }
+    ]
+  }
 }
