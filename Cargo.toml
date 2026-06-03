@@ -1,0 +1,12 @@
+[package]
+name = "suivi"
+version = "0.1.0"
+edition = "2024"
+description = "Track time spent working with AI coding agents across multiple projects"
+license = "MIT"
+repository = "https://github.com/hefgi/suivi"
+homepage = "https://github.com/hefgi/suivi"
+keywords = ["cli", "ai", "productivity", "time-tracking", "agents"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
