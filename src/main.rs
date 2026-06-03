@@ -1,5 +1,6 @@
 #[allow(dead_code)]
 mod agents;
+mod analytics;
 mod cli;
 #[allow(dead_code)]
 mod commands;
