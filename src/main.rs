@@ -10,6 +10,8 @@ mod db;
 #[allow(dead_code)]
 mod error;
 #[allow(dead_code)]
+mod hooks;
+#[allow(dead_code)]
 mod log;
 
 fn main() {
