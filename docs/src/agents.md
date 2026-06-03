@@ -4,8 +4,8 @@
 |-------|--------|-------------|
 | Claude Code | ✅ v1 | Per-prompt |
 | Codex | ✅ v1 | Per-prompt |
-| Pi | ✅ v1 | Per-prompt |
 | OpenCode | ✅ v1 | Per session-idle cycle |
+| Pi | ⚗️ experimental | Per session |
 
 ## Adding a new agent
 
@@ -13,4 +13,6 @@
 2. Add hook template files under `src/agents/<name>/hooks/`
 3. Register it in `all_agents()` in `src/agents/mod.rs`
 
-See [CONTRIBUTING.md](contributing.md) for details.
+The agent must provide a `session_id` in its hook payload — this is required for correct per-session tracking.
+
+See [Contributing](contributing.md) for the full workflow.
