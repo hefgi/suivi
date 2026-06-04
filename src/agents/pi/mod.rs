@@ -17,7 +17,7 @@ impl Agent for PiAgent {
             || env
                 .parent_process_name
                 .as_deref()
-                .map(|n| n.contains("pi"))
+                .map(|n| n == "pi" || n.ends_with("/pi"))
                 .unwrap_or(false)
     }
 
@@ -87,6 +87,8 @@ mod tests {
         let agent = PiAgent;
         assert!(agent.detect(&env_with_parent("pi")));
         assert!(!agent.detect(&env_with_parent("vim")));
+        assert!(!agent.detect(&env_with_parent("pip")));
+        assert!(!agent.detect(&env_with_parent("pipenv")));
     }
 
     #[test]
