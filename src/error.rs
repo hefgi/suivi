@@ -5,10 +5,6 @@ pub enum SuiviError {
     #[error("database error: {0}")]
     Db(#[from] rusqlite::Error),
 
-    #[allow(dead_code)]
-    #[error("config error: {0}")]
-    Config(String),
-
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 

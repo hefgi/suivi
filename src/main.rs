@@ -6,7 +6,6 @@ mod config;
 mod db;
 mod error;
 mod hooks;
-mod log;
 
 use clap::Parser;
 use cli::{Cli, Command, HookEvent};
