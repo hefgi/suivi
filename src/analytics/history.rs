@@ -76,9 +76,9 @@ pub fn run(
                     .project_name
                     .as_deref()
                     .or_else(|| {
-                        turn.project_path
-                            .as_ref()
-                            .and_then(|p| std::path::Path::new(p).file_name().and_then(|n| n.to_str()))
+                        turn.project_path.as_ref().and_then(|p| {
+                            std::path::Path::new(p).file_name().and_then(|n| n.to_str())
+                        })
                     })
                     .unwrap_or("(untracked)");
 
