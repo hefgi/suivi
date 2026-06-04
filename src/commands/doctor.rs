@@ -6,7 +6,8 @@ use crate::{config, db};
 pub fn run(prune: bool, check: bool) -> Result<()> {
     let conn = db::open()?;
 
-    // Always show integrity status (--check is kept for backwards compat but no longer needed)
+    // Show integrity check by default, and when --check is passed explicitly.
+    // Skip when --prune is the only flag (prune-only mode stays fast).
     if check || !prune {
         println!("{}", "Integrity check".bold());
         let result: String = conn
