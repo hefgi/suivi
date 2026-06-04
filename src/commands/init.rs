@@ -12,7 +12,7 @@ pub fn run() -> Result<()> {
 
     if config_path.exists() {
         println!("Config already exists at {}", config_path.display());
-        println!("Run 'suivi doctor' to check hook health.");
+        println!("Run 'suivi status' to check hook health.");
         return Ok(());
     }
 
@@ -68,9 +68,12 @@ pub fn run() -> Result<()> {
 
     let installed = install_hooks()?;
     if installed.is_empty() {
-        println!("No agents detected for hook installation.");
+        println!("No agents configured for hook installation.");
     } else {
-        println!("Hooks installed for: {}", installed.join(", "));
+        println!("Hooks configured for:");
+        for name in &installed {
+            println!("  {}", name);
+        }
     }
 
     Ok(())

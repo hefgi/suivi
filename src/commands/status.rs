@@ -52,13 +52,14 @@ pub fn run() -> Result<()> {
         .unwrap_or_default();
 
     let turns = db::query_turns(&conn, Some(&since), None, None).unwrap_or_default();
-    if turns.is_empty() {
-        println!("  No turns recorded in the last 7 days.");
+    let completed: Vec<_> = turns.iter().filter(|t| t.ended_at.is_some()).collect();
+    if completed.is_empty() {
+        println!("  No completed turns in the last 7 days.");
     } else {
-        println!("  {} turns recorded in the last 7 days.", turns.len());
-        // Show count per agent
+        println!("  {} turns recorded in the last 7 days.", completed.len());
+        // Show count per agent (completed only)
         let mut by_agent: std::collections::HashMap<&str, usize> = Default::default();
-        for t in &turns {
+        for t in &completed {
             *by_agent.entry(t.agent.as_str()).or_default() += 1;
         }
         let mut agent_counts: Vec<_> = by_agent.iter().collect();
