@@ -29,7 +29,7 @@ pub fn run(
         let week_start = (now - chrono::Duration::days(7)).to_rfc3339();
         vec![
             ("Today", today_start),
-            ("This week", Some(week_start)),
+            ("Last 7 days", Some(week_start)),
             ("All time", None),
         ]
     };
