@@ -69,7 +69,7 @@ pub struct StatsArgs {
     #[arg(long)]
     pub daily: bool,
 
-    /// Output format
+    /// Output format (applies to default stats summary and --history; --graph and --daily are text-only)
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
 }

@@ -53,6 +53,7 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
             since.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
+            &args.format,
         )?;
     } else if args.graph {
         let since = if args.all {
