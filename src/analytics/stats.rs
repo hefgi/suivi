@@ -40,7 +40,7 @@ pub fn run(
             for (label, since) in &windows {
                 let turns = db::query_turns(&conn, since.as_deref(), project, agent_filter)?;
                 let turn_count = turns.iter().filter(|t| t.ended_at.is_some()).count();
-                let wall = wall_clock_secs(&turns, cfg.buffer_mins);
+                let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
                 let accum = accumulated_secs(&turns);
                 entries.push(serde_json::json!({
                     "window": label,
@@ -56,7 +56,7 @@ pub fn run(
             for (label, since) in &windows {
                 let turns = db::query_turns(&conn, since.as_deref(), project, agent_filter)?;
                 let turn_count = turns.iter().filter(|t| t.ended_at.is_some()).count();
-                let wall = wall_clock_secs(&turns, cfg.buffer_mins);
+                let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
                 let accum = accumulated_secs(&turns);
                 println!("{},{},{},{}", label, turn_count, wall, accum);
             }
@@ -68,7 +68,7 @@ pub fn run(
                 let turns = db::query_turns(&conn, since.as_deref(), project, agent_filter)?;
                 let completed: Vec<_> = turns.iter().filter(|t| t.ended_at.is_some()).collect();
                 let turn_count = completed.len();
-                let wall = wall_clock_secs(&turns, cfg.buffer_mins);
+                let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
                 let accum = accumulated_secs(&turns);
 
                 println!("{}", label.bold());

@@ -22,7 +22,7 @@ pub fn run(prune: bool, check: bool) -> Result<()> {
     }
 
     let stale_count = db::count_stale(&conn).unwrap_or(0);
-    let retention_days = config::load().unwrap_or_default().retention_days;
+    let retention_days = config::load().unwrap_or_default().tracking.retention_days;
     let beyond_retention = db::count_beyond_retention(&conn, retention_days).unwrap_or(0);
 
     println!("{}", "Database status".bold());

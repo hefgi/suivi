@@ -2,38 +2,97 @@ use crate::error::SuiviError;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+// ── New schema (PRD-compliant) ────────────────────────────────────────────────
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectEntry {
-    pub paths: Vec<String>,
+    pub path: String,
     pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Tracking {
+    #[serde(default = "default_human_buffer_secs")]
+    pub human_buffer_secs: u32,
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    #[serde(default = "default_buffer_mins")]
-    pub buffer_mins: u32,
-    #[serde(default = "default_retention_days")]
-    pub retention_days: u32,
+    #[serde(default)]
+    pub tracking: Tracking,
     #[serde(default)]
     pub projects: Vec<ProjectEntry>,
 }
 
-fn default_buffer_mins() -> u32 {
-    5
+fn default_human_buffer_secs() -> u32 {
+    300
 }
 fn default_retention_days() -> u32 {
-    90
+    365
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            buffer_mins: default_buffer_mins(),
-            retention_days: default_retention_days(),
+            tracking: Tracking {
+                human_buffer_secs: default_human_buffer_secs(),
+                retention_days: default_retention_days(),
+            },
             projects: vec![],
         }
     }
 }
+
+// ── Legacy schema (v0) for transparent migration ──────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct ConfigV0 {
+    #[serde(default = "default_buffer_mins_v0")]
+    buffer_mins: u32,
+    #[serde(default = "default_retention_days_v0")]
+    retention_days: u32,
+    #[serde(default)]
+    projects: Vec<ProjectEntryV0>,
+}
+
+fn default_buffer_mins_v0() -> u32 {
+    5
+}
+fn default_retention_days_v0() -> u32 {
+    90
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectEntryV0 {
+    paths: Vec<String>,
+    name: Option<String>,
+}
+
+impl From<ConfigV0> for Config {
+    fn from(v0: ConfigV0) -> Self {
+        Config {
+            tracking: Tracking {
+                human_buffer_secs: v0.buffer_mins * 60,
+                retention_days: v0.retention_days,
+            },
+            projects: v0
+                .projects
+                .into_iter()
+                .flat_map(|e| {
+                    let name = e.name.clone();
+                    e.paths.into_iter().enumerate().map(move |(i, p)| ProjectEntry {
+                        path: p,
+                        name: if i == 0 { name.clone() } else { None },
+                    })
+                })
+                .collect(),
+        }
+    }
+}
+
+// ── Paths ─────────────────────────────────────────────────────────────────────
 
 pub fn config_path() -> PathBuf {
     dirs::config_dir()
@@ -42,24 +101,35 @@ pub fn config_path() -> PathBuf {
         .join("config.toml")
 }
 
+// ── Load / Save ───────────────────────────────────────────────────────────────
+
 pub fn load() -> Result<Config, SuiviError> {
     let path = config_path();
     if !path.exists() {
         return Ok(Config::default());
     }
-    let content = std::fs::read_to_string(&path)?;
-    let config: Config = toml::from_str(&content)?;
-    Ok(config)
+    load_from(&path)
 }
 
-#[allow(dead_code)]
 pub fn load_from(path: &Path) -> Result<Config, SuiviError> {
     if !path.exists() {
         return Ok(Config::default());
     }
     let content = std::fs::read_to_string(path)?;
-    let config: Config = toml::from_str(&content)?;
-    Ok(config)
+    // Try new schema first.
+    if let Ok(cfg) = toml::from_str::<Config>(&content) {
+        // Distinguish new format from old: new format has [tracking] section OR no buffer_mins key.
+        if !content.contains("buffer_mins") {
+            return Ok(cfg);
+        }
+    }
+    // Fall back to legacy schema.
+    if let Ok(v0) = toml::from_str::<ConfigV0>(&content) {
+        return Ok(Config::from(v0));
+    }
+    // Last resort: return the new-schema parse result (may have partial fields).
+    let cfg: Config = toml::from_str(&content)?;
+    Ok(cfg)
 }
 
 pub fn save(config: &Config) -> Result<(), SuiviError> {
@@ -75,6 +145,8 @@ pub fn save_to(config: &Config, path: &Path) -> Result<(), SuiviError> {
     std::fs::write(path, content)?;
     Ok(())
 }
+
+// ── Path helpers ──────────────────────────────────────────────────────────────
 
 fn expand_tilde(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("~/") {
@@ -93,26 +165,22 @@ fn has_glob_chars(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
 }
 
-pub fn expand_globs(entry: &ProjectEntry) -> Vec<PathBuf> {
+pub fn expand_globs(path: &str) -> Vec<PathBuf> {
+    let expanded = expand_tilde(path);
     let mut results = Vec::new();
-    for pattern in &entry.paths {
-        let expanded = expand_tilde(pattern);
-        if has_glob_chars(&expanded) {
-            match glob::glob(&expanded) {
-                Ok(paths) => {
-                    for path in paths.flatten() {
-                        results.push(path);
-                    }
-                }
-                Err(_) => {
-                    // If glob fails, treat as literal path
-                    results.push(PathBuf::from(&expanded));
+    if has_glob_chars(&expanded) {
+        match glob::glob(&expanded) {
+            Ok(paths) => {
+                for p in paths.flatten() {
+                    results.push(p);
                 }
             }
-        } else {
-            // No glob characters: treat as literal path regardless of existence
-            results.push(PathBuf::from(&expanded));
+            Err(_) => {
+                results.push(PathBuf::from(&expanded));
+            }
         }
+    } else {
+        results.push(PathBuf::from(&expanded));
     }
     results.sort();
     results.dedup();
@@ -124,8 +192,7 @@ pub fn find_project<'a>(config: &'a Config, cwd: &str) -> Option<(&'a ProjectEnt
     let mut best: Option<(&'a ProjectEntry, PathBuf)> = None;
 
     for entry in &config.projects {
-        let expanded = expand_globs(entry);
-        for path in expanded {
+        for path in expand_globs(&entry.path) {
             if cwd_path.starts_with(&path) {
                 let is_better = match &best {
                     None => true,
@@ -141,6 +208,8 @@ pub fn find_project<'a>(config: &'a Config, cwd: &str) -> Option<(&'a ProjectEnt
     best
 }
 
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,8 +218,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.buffer_mins, 5);
-        assert_eq!(config.retention_days, 90);
+        assert_eq!(config.tracking.human_buffer_secs, 300);
+        assert_eq!(config.tracking.retention_days, 365);
         assert!(config.projects.is_empty());
     }
 
@@ -159,8 +228,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("nonexistent.toml");
         let config = load_from(&path).unwrap();
-        assert_eq!(config.buffer_mins, 5);
-        assert_eq!(config.retention_days, 90);
+        assert_eq!(config.tracking.human_buffer_secs, 300);
+        assert_eq!(config.tracking.retention_days, 365);
     }
 
     #[test]
@@ -168,28 +237,67 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
         let original = Config {
-            buffer_mins: 10,
-            retention_days: 180,
+            tracking: Tracking {
+                human_buffer_secs: 600,
+                retention_days: 180,
+            },
             projects: vec![ProjectEntry {
-                paths: vec!["/home/user/project".to_string()],
+                path: "/home/user/project".to_string(),
                 name: Some("My Project".to_string()),
             }],
         };
         save_to(&original, &path).unwrap();
         let loaded = load_from(&path).unwrap();
-        assert_eq!(loaded.buffer_mins, 10);
-        assert_eq!(loaded.retention_days, 180);
+        assert_eq!(loaded.tracking.human_buffer_secs, 600);
+        assert_eq!(loaded.tracking.retention_days, 180);
         assert_eq!(loaded.projects.len(), 1);
         assert_eq!(loaded.projects[0].name.as_deref(), Some("My Project"));
     }
 
     #[test]
+    fn test_legacy_migration() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let old = r#"
+buffer_mins = 10
+retention_days = 60
+
+[[projects]]
+paths = ["/home/user/proj"]
+name = "TestProj"
+"#;
+        std::fs::write(&path, old).unwrap();
+        let cfg = load_from(&path).unwrap();
+        assert_eq!(cfg.tracking.human_buffer_secs, 600); // 10 * 60
+        assert_eq!(cfg.tracking.retention_days, 60);
+        assert_eq!(cfg.projects.len(), 1);
+        assert_eq!(cfg.projects[0].path, "/home/user/proj");
+        assert_eq!(cfg.projects[0].name.as_deref(), Some("TestProj"));
+    }
+
+    #[test]
+    fn test_legacy_migration_multi_paths() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let old = r#"
+buffer_mins = 5
+
+[[projects]]
+paths = ["/a", "/b", "/c"]
+"#;
+        std::fs::write(&path, old).unwrap();
+        let cfg = load_from(&path).unwrap();
+        assert_eq!(cfg.projects.len(), 3);
+        assert_eq!(cfg.projects[0].path, "/a");
+        assert_eq!(cfg.projects[1].path, "/b");
+    }
+
+    #[test]
     fn test_find_project_exact_match() {
         let config = Config {
-            buffer_mins: 5,
-            retention_days: 90,
+            tracking: Tracking::default(),
             projects: vec![ProjectEntry {
-                paths: vec!["/home/user/project".to_string()],
+                path: "/home/user/project".to_string(),
                 name: Some("Test".to_string()),
             }],
         };
@@ -204,10 +312,9 @@ mod tests {
         std::fs::create_dir_all(&subdir).unwrap();
 
         let config = Config {
-            buffer_mins: 5,
-            retention_days: 90,
+            tracking: Tracking::default(),
             projects: vec![ProjectEntry {
-                paths: vec![dir.path().to_str().unwrap().to_string()],
+                path: dir.path().to_str().unwrap().to_string(),
                 name: None,
             }],
         };
@@ -225,15 +332,14 @@ mod tests {
         std::fs::create_dir_all(&grandchild).unwrap();
 
         let config = Config {
-            buffer_mins: 5,
-            retention_days: 90,
+            tracking: Tracking::default(),
             projects: vec![
                 ProjectEntry {
-                    paths: vec![parent.to_str().unwrap().to_string()],
+                    path: parent.to_str().unwrap().to_string(),
                     name: Some("Parent".to_string()),
                 },
                 ProjectEntry {
-                    paths: vec![child.to_str().unwrap().to_string()],
+                    path: child.to_str().unwrap().to_string(),
                     name: Some("Child".to_string()),
                 },
             ],
@@ -247,10 +353,9 @@ mod tests {
     #[test]
     fn test_find_project_no_match() {
         let config = Config {
-            buffer_mins: 5,
-            retention_days: 90,
+            tracking: Tracking::default(),
             projects: vec![ProjectEntry {
-                paths: vec!["/home/user/project".to_string()],
+                path: "/home/user/project".to_string(),
                 name: None,
             }],
         };
@@ -260,12 +365,7 @@ mod tests {
 
     #[test]
     fn test_expand_globs_tilde() {
-        let entry = ProjectEntry {
-            paths: vec!["~/".to_string()],
-            name: None,
-        };
-        let expanded = expand_globs(&entry);
-        // Should expand tilde — the home dir itself should match
+        let expanded = expand_globs("~/");
         if let Some(home) = dirs::home_dir() {
             assert!(expanded.iter().any(|p| p == &home));
         }
@@ -275,10 +375,9 @@ mod tests {
     fn test_find_project_name_optional() {
         let dir = TempDir::new().unwrap();
         let config = Config {
-            buffer_mins: 5,
-            retention_days: 90,
+            tracking: Tracking::default(),
             projects: vec![ProjectEntry {
-                paths: vec![dir.path().to_str().unwrap().to_string()],
+                path: dir.path().to_str().unwrap().to_string(),
                 name: None,
             }],
         };

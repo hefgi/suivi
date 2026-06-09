@@ -35,8 +35,8 @@ pub fn merge_intervals(mut intervals: Vec<(DateTime<Utc>, DateTime<Utc>)>) -> f6
 /// Compute wall-clock seconds for a set of turns.
 /// Expands each completed turn to [started_at - B, ended_at + B], merges overlaps, sums.
 /// Only uses started_at / ended_at columns.
-pub fn wall_clock_secs(turns: &[TurnRow], buffer_mins: u32) -> f64 {
-    let buffer = Duration::minutes(buffer_mins as i64);
+pub fn wall_clock_secs(turns: &[TurnRow], buffer_secs: u32) -> f64 {
+    let buffer = Duration::seconds(buffer_secs as i64);
     let intervals: Vec<(DateTime<Utc>, DateTime<Utc>)> = turns
         .iter()
         .filter(|t| t.ended_at.is_some())

@@ -49,15 +49,11 @@ pub fn run() -> Result<()> {
     } else {
         let projects = paths
             .into_iter()
-            .map(|p| config::ProjectEntry {
-                paths: vec![p],
-                name: None,
-            })
+            .map(|p| config::ProjectEntry { path: p, name: None })
             .collect();
 
         let cfg = config::Config {
-            buffer_mins: 5,
-            retention_days: 90,
+            tracking: config::Tracking::default(),
             projects,
         };
 
@@ -200,10 +196,10 @@ mod tests {
         // We can't call run() directly (it reads stdin), so test the guard logic separately
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("config.toml");
+        // Legacy-format config — load_from should migrate transparently
         std::fs::write(&path, "buffer_mins = 5\n").unwrap();
-        // The config exists at path — load_from should succeed
         let cfg = crate::config::load_from(&path).unwrap();
-        assert_eq!(cfg.buffer_mins, 5);
+        assert_eq!(cfg.tracking.human_buffer_secs, 300); // 5 * 60
     }
 
     #[test]

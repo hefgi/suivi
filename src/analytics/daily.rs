@@ -38,7 +38,7 @@ pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str
     for (date, indices) in &by_day {
         let wall: f64 = {
             use chrono::Duration;
-            let buffer = Duration::minutes(cfg.buffer_mins as i64);
+            let buffer = Duration::seconds(cfg.tracking.human_buffer_secs as i64);
             let intervals: Vec<_> = indices
                 .iter()
                 .filter_map(|&i| {

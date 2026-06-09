@@ -43,7 +43,7 @@ fn run() -> Result<(), anyhow::Error> {
     let now = Utc::now();
 
     // Buffer correction: correct previous turn's effective duration if gap < buffer*2
-    let buffer_secs = config.buffer_mins as f64 * 60.0;
+    let buffer_secs = config.tracking.human_buffer_secs as f64;
     if let Ok(Some(prev)) = db::last_ended_turn(&conn, &payload.session_id) {
         if let Ok(prev_ended) = chrono::DateTime::parse_from_rfc3339(&prev.ended_at) {
             let gap_secs = (now - prev_ended.with_timezone(&Utc)).num_seconds() as f64;

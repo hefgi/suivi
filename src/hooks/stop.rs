@@ -26,7 +26,7 @@ fn run() -> Result<(), anyhow::Error> {
     let duration_ms: Option<f64> = v.get("duration_ms").and_then(|d| d.as_f64());
 
     let config = config::load().unwrap_or_default();
-    let buffer_secs = config.buffer_mins as f64 * 60.0;
+    let buffer_secs = config.tracking.human_buffer_secs as f64;
     let agent_duration_secs = duration_ms.unwrap_or(0.0) / 1000.0;
     let effective_duration_secs = buffer_secs + agent_duration_secs + buffer_secs;
 
