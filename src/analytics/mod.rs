@@ -1,6 +1,8 @@
+pub mod agent_view;
 pub mod daily;
 pub mod graph;
 pub mod history;
+pub mod project_view;
 pub mod projects;
 pub mod stats;
 
@@ -61,6 +63,44 @@ pub fn accumulated_secs(turns: &[TurnRow]) -> f64 {
         .filter_map(|t| t.effective_duration_secs)
         .sum();
     total.max(0.0)
+}
+
+/// Build the Sessions column string: "claude-code ×2  pi ×3  │ 12 total"
+/// `indices` are the turn-slice indices belonging to a single project (or all turns for agents view).
+pub fn sessions_column(turns: &[TurnRow], indices: &[usize]) -> String {
+    use std::collections::{HashMap, HashSet};
+
+    let mut by_agent: HashMap<&str, HashSet<&str>> = HashMap::new();
+    let mut total_sessions: HashSet<&str> = HashSet::new();
+
+    for &i in indices {
+        let t = &turns[i];
+        if t.ended_at.is_none() {
+            continue;
+        }
+        by_agent
+            .entry(t.agent.as_str())
+            .or_default()
+            .insert(t.session_id.as_str());
+        total_sessions.insert(t.session_id.as_str());
+    }
+
+    if by_agent.is_empty() {
+        return "│ 0 total".to_string();
+    }
+
+    let mut agents: Vec<(&str, usize)> = by_agent
+        .iter()
+        .map(|(&a, sessions)| (a, sessions.len()))
+        .collect();
+    agents.sort_by_key(|(a, _)| *a);
+
+    let parts: Vec<String> = agents
+        .iter()
+        .map(|(agent, count)| format!("{} ×{}", agent, count))
+        .collect();
+
+    format!("{}  │ {} total", parts.join("  "), total_sessions.len())
 }
 
 /// Format seconds as human-readable duration: "1h 23m" or "45m" or "< 1m"
