@@ -41,11 +41,27 @@ pub enum HookEvent {
 
 #[derive(Args)]
 pub struct StatsArgs {
-    /// Show stats for all time (default shows today + this week + all time)
+    /// Show stats for all time
     #[arg(long)]
     pub all: bool,
 
-    /// Filter by project path
+    /// Show stats for today only
+    #[arg(long)]
+    pub today: bool,
+
+    /// Show stats for the last 7 rolling days
+    #[arg(long)]
+    pub week: bool,
+
+    /// Show stats for the last 30 rolling days
+    #[arg(long)]
+    pub month: bool,
+
+    /// Show stats from a specific date (YYYY-MM-DD)
+    #[arg(long, value_name = "DATE")]
+    pub since: Option<String>,
+
+    /// Filter by project name or path
     #[arg(long)]
     pub project: Option<String>,
 

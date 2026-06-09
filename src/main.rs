@@ -34,51 +34,116 @@ fn main() {
     }
 }
 
+/// Resolve --today/--week/--month/--since/--all into an optional RFC3339 lower bound.
+/// Returns None for --all (no lower bound). Returns None for the default case too —
+/// the default stats view manages its own time windows internally.
+fn resolve_since(args: &cli::StatsArgs) -> Option<String> {
+    let now = chrono::Utc::now();
+    if args.all {
+        return None;
+    }
+    if let Some(date_str) = &args.since {
+        // Parse YYYY-MM-DD
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            let dt = date
+                .and_hms_opt(0, 0, 0)
+                .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc));
+            return dt.map(|d| d.to_rfc3339());
+        }
+    }
+    if args.today {
+        let start = now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc));
+        return start.map(|d| d.to_rfc3339());
+    }
+    if args.week {
+        return Some((now - chrono::Duration::days(7)).to_rfc3339());
+    }
+    if args.month {
+        return Some((now - chrono::Duration::days(30)).to_rfc3339());
+    }
+    // No time flag — return None; callers that need a default window handle it themselves.
+    None
+}
+
 fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
+    // Auto-prune retention on every stats run (Gap #9)
+    if let Ok(conn) = db::open() {
+        let retention = config::load().unwrap_or_default().tracking.retention_days;
+        let _ = db::delete_beyond_retention(&conn, retention);
+    }
+
+    let since = resolve_since(&args);
+    let has_time_flag = args.all || args.today || args.week || args.month || args.since.is_some();
+
+    // --project scoped view (Gap #8): when --project is set with no other mode flag
+    if args.project.is_some() && !args.projects && !args.history && !args.graph && !args.daily {
+        return analytics::project_view::run(
+            args.project.as_deref().unwrap(),
+            since.as_deref(),
+            has_time_flag,
+        );
+    }
+
+    // --agent scoped view (Gap #7): when --agent is set with no other mode flag and no --project
+    if args.agent.is_some() && !args.projects && !args.history && !args.graph && !args.daily && args.project.is_none() {
+        return analytics::agent_view::run(
+            args.agent.as_deref().unwrap(),
+            since.as_deref(),
+            has_time_flag,
+        );
+    }
+
     if args.projects {
-        let since = if args.all {
-            None
+        let query_since = if has_time_flag {
+            since.clone()
         } else {
             Some((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339())
         };
-        analytics::projects::run(since.as_deref(), args.agent.as_deref())?;
+        analytics::projects::run(query_since.as_deref(), args.agent.as_deref())?;
     } else if args.history {
-        let since = if args.all {
-            None
+        let query_since = if has_time_flag {
+            since.clone()
         } else {
             Some((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339())
         };
         analytics::history::run(
-            since.as_deref(),
+            query_since.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
             &args.format,
         )?;
     } else if args.graph {
-        let since = if args.all {
-            None
+        let query_since = if has_time_flag {
+            since.clone()
         } else {
             Some((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339())
         };
         analytics::graph::run(
-            since.as_deref(),
+            query_since.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
         )?;
     } else if args.daily {
-        let since = if args.all {
-            None
+        let query_since = if has_time_flag {
+            since.clone()
         } else {
             Some((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339())
         };
         analytics::daily::run(
-            since.as_deref(),
+            query_since.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
         )?;
     } else {
         analytics::stats::run(
             args.all,
+            args.today,
+            args.week,
+            args.month,
+            since.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
             &args.format,
