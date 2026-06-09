@@ -11,8 +11,19 @@ pub fn run() -> Result<()> {
     let config_path = config::config_path();
 
     if config_path.exists() {
-        println!("Config already exists at {}", config_path.display());
-        println!("Run 'suivi status' to check hook health.");
+        println!(
+            "Config already exists at {}, skipping.",
+            config_path.display()
+        );
+        let installed = install_hooks()?;
+        if installed.is_empty() {
+            println!("No agents configured for hook installation.");
+        } else {
+            println!("Hooks synced for:");
+            for name in &installed {
+                println!("  {}", name);
+            }
+        }
         return Ok(());
     }
 
