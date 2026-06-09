@@ -1,10 +1,10 @@
 use anyhow::Result;
 use colored::Colorize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{config, db};
 
-use super::format_duration;
+use super::{format_duration, sessions_column};
 
 pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
@@ -29,53 +29,58 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
     }
 
     let mut projects: Vec<(String, Vec<usize>)> = by_project.into_iter().collect();
-    // Sort by accumulated time descending
     projects.sort_by(|a, b| {
-        let a_acc: f64 =
-            a.1.iter()
-                .filter_map(|&i| {
-                    let t = &turns[i];
-                    if t.ended_at.is_some() {
-                        t.effective_duration_secs
-                    } else {
-                        None
-                    }
-                })
-                .sum();
-        let b_acc: f64 =
-            b.1.iter()
-                .filter_map(|&i| {
-                    let t = &turns[i];
-                    if t.ended_at.is_some() {
-                        t.effective_duration_secs
-                    } else {
-                        None
-                    }
-                })
-                .sum();
+        let a_acc: f64 = a
+            .1
+            .iter()
+            .filter_map(|&i| {
+                let t = &turns[i];
+                if t.ended_at.is_some() {
+                    t.effective_duration_secs
+                } else {
+                    None
+                }
+            })
+            .sum();
+        let b_acc: f64 = b
+            .1
+            .iter()
+            .filter_map(|&i| {
+                let t = &turns[i];
+                if t.ended_at.is_some() {
+                    t.effective_duration_secs
+                } else {
+                    None
+                }
+            })
+            .sum();
         b_acc
             .partial_cmp(&a_acc)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    println!("{}", "Projects".bold());
-    println!();
+    println!("{}", "suivi — Project comparison".bold());
+    println!("{}", "─".repeat(90));
 
-    let name_w = 24usize;
-    let time_w = 12usize;
+    let name_w = 20usize;
+    let time_w = 11usize;
     println!(
-        "{:<width$}  {:>tw$}  {:>tw$}  {}",
+        "{:<nw$}  {:>tw$}  {:>tw$}  {:>5}  {}",
         "Project".bold(),
         "Wall-clock".bold(),
         "Accumulated".bold(),
+        "Turns".bold(),
         "Sessions".bold(),
-        width = name_w,
+        nw = name_w,
         tw = time_w
     );
-    println!("{}", "-".repeat(name_w + time_w * 2 + 20));
+    println!("{}", "─".repeat(90));
+
+    let mut total_wall = 0.0f64;
+    let mut total_accum = 0.0f64;
+    let mut total_turns = 0usize;
 
     for (name, indices) in &projects {
-        // Compute wall-clock inline (avoid Clone requirement)
         let wall: f64 = {
             use chrono::Duration;
             let buffer = Duration::seconds(cfg.tracking.human_buffer_secs as i64);
@@ -107,13 +112,12 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
             })
             .sum();
 
-        let total_sessions: usize = indices
+        let turn_count = indices
             .iter()
-            .map(|&i| turns[i].session_id.as_str())
-            .collect::<HashSet<_>>()
-            .len();
+            .filter(|&&i| turns[i].ended_at.is_some())
+            .count();
 
-        let sessions_str = format!("×{}", total_sessions);
+        let sessions_str = sessions_column(&turns, indices);
 
         let display_name = if name.len() > name_w {
             format!("{}…", &name[..name_w - 1])
@@ -122,15 +126,31 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
         };
 
         println!(
-            "{:<width$}  {:>tw$}  {:>tw$}  {}",
+            "{:<nw$}  {:>tw$}  {:>tw$}  {:>5}  {}",
             display_name,
             format_duration(wall),
             format_duration(accum),
+            turn_count,
             sessions_str,
-            width = name_w,
+            nw = name_w,
             tw = time_w
         );
+
+        total_wall += wall;
+        total_accum += accum;
+        total_turns += turn_count;
     }
+
+    println!("{}", "─".repeat(90));
+    println!(
+        "{:<nw$}  {:>tw$}  {:>tw$}  {:>5}",
+        "Total".bold(),
+        format_duration(total_wall).bold(),
+        format_duration(total_accum).bold(),
+        total_turns,
+        nw = name_w,
+        tw = time_w
+    );
 
     Ok(())
 }
