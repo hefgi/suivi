@@ -29,8 +29,8 @@ pub fn run() -> Result<()> {
 
     println!("{}", "suivi init — configure project tracking".bold());
     println!();
-    println!("Enter project paths to track (one per line, globs supported).");
-    println!("Press Enter on an empty line when done.");
+    println!("Enter project paths to track (one per line or comma-separated).");
+    println!("Globs are supported. Press Enter on an empty line when done.");
     println!("Examples: ~/code/myapp, ~/work/client-*, /home/user/oss/**");
     println!();
 
@@ -46,7 +46,7 @@ pub fn run() -> Result<()> {
         if line.is_empty() {
             break;
         }
-        paths.push(line);
+        paths.extend(split_paths(&line));
     }
 
     if paths.is_empty() {
@@ -87,6 +87,16 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Split a single user-entered line into one or more project paths.
+/// Commas separate; surrounding whitespace and trailing slashes are stripped;
+/// empty tokens are dropped.
+fn split_paths(line: &str) -> Vec<String> {
+    line.split(',')
+        .map(|p| p.trim().trim_end_matches('/').to_string())
+        .filter(|p| !p.is_empty())
+        .collect()
 }
 
 pub fn install_hooks() -> Result<Vec<String>> {
@@ -252,6 +262,24 @@ mod tests {
         // Count occurrences — should appear exactly once
         let count = content.matches("suivi hook pre").count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_split_paths_comma_separated() {
+        let parts = split_paths("~/a, ~/b/, /c/d , , /e");
+        assert_eq!(parts, vec!["~/a", "~/b", "/c/d", "/e"]);
+    }
+
+    #[test]
+    fn test_split_paths_single() {
+        let parts = split_paths("/just/one");
+        assert_eq!(parts, vec!["/just/one"]);
+    }
+
+    #[test]
+    fn test_split_paths_empty() {
+        let parts = split_paths("  , ,  ");
+        assert!(parts.is_empty());
     }
 
     #[test]
