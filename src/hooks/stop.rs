@@ -24,6 +24,7 @@ fn run() -> Result<(), anyhow::Error> {
         None => return Ok(()),
     };
     let duration_ms: Option<f64> = v.get("duration_ms").and_then(|d| d.as_f64());
+    let transcript_path: Option<&str> = v.get("transcript_path").and_then(|s| s.as_str());
 
     let config = config::load().unwrap_or_default();
     let buffer_secs = config.tracking.human_buffer_secs as f64;
@@ -47,13 +48,105 @@ fn run() -> Result<(), anyhow::Error> {
         },
     )?;
 
+    // Claude Code's UserPromptSubmit payload omits the model, so we read it
+    // from the transcript at Stop time. Best-effort: ignore parse failures.
+    if let Some(path) = transcript_path {
+        if let Some(model) = read_last_assistant_model(path) {
+            let _ = db::set_model(&conn, open_turn.id, &model);
+        }
+    }
+
     Ok(())
+}
+
+/// Scan a Claude Code transcript JSONL backwards for the most recent
+/// `{type: "assistant", message: {model: "..."}}` line and return the model.
+fn read_last_assistant_model(path: &str) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines().rev() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        if let Some(model) = v
+            .get("message")
+            .and_then(|m| m.get("model"))
+            .and_then(|m| m.as_str())
+        {
+            return Some(model.to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn transcript_with(lines: &[&str]) -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        for line in lines {
+            writeln!(f, "{}", line).unwrap();
+        }
+        f.flush().unwrap();
+        f
+    }
+
     #[test]
-    fn test_module_compiles() {
-        // Phase 4 will add integration tests once main.rs is wired
+    fn test_read_last_assistant_model_basic() {
+        let f = transcript_with(&[
+            r#"{"type":"user","message":{"role":"user","content":"hi"}}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","model":"claude-opus-4-7","content":"hello"}}"#,
+        ]);
+        let model = read_last_assistant_model(f.path().to_str().unwrap());
+        assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn test_read_last_assistant_model_picks_latest() {
+        let f = transcript_with(&[
+            r#"{"type":"assistant","message":{"model":"claude-sonnet-4-6"}}"#,
+            r#"{"type":"user","message":{"content":"again"}}"#,
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-7"}}"#,
+        ]);
+        let model = read_last_assistant_model(f.path().to_str().unwrap());
+        assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn test_read_last_assistant_model_missing_returns_none() {
+        let f = transcript_with(&[
+            r#"{"type":"user","message":{"content":"hi"}}"#,
+            r#"{"type":"attachment"}"#,
+        ]);
+        let model = read_last_assistant_model(f.path().to_str().unwrap());
+        assert!(model.is_none());
+    }
+
+    #[test]
+    fn test_read_last_assistant_model_bad_lines_skipped() {
+        let f = transcript_with(&[
+            "not json",
+            "",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-7"}}"#,
+            "garbage",
+        ]);
+        let model = read_last_assistant_model(f.path().to_str().unwrap());
+        assert_eq!(model.as_deref(), Some("claude-opus-4-7"));
+    }
+
+    #[test]
+    fn test_read_last_assistant_model_nonexistent_file() {
+        let model = read_last_assistant_model("/tmp/does-not-exist-suivi-test.jsonl");
+        assert!(model.is_none());
     }
 }

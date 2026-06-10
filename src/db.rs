@@ -207,6 +207,17 @@ pub fn correct_effective_duration(
     Ok(())
 }
 
+/// Set the model for a turn. Used by `hook stop` when the model is discovered
+/// after the turn was inserted (e.g. Claude Code's UserPromptSubmit payload
+/// omits the model — we read it from the transcript at Stop time instead).
+pub fn set_model(conn: &Connection, id: i64, model: &str) -> Result<(), SuiviError> {
+    conn.execute(
+        "UPDATE turns SET model = ?1 WHERE id = ?2",
+        params![model, id],
+    )?;
+    Ok(())
+}
+
 pub const STALE_FILTER: &str =
     "NOT (ended_at IS NULL AND (julianday('now') - julianday(started_at)) * 86400.0 > 7200)";
 
