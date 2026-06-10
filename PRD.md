@@ -250,62 +250,97 @@ Payload includes `session_id`, `cwd`, `model`, `hook_event_name` via stdin JSON.
 
 Pi uses a **JavaScript/TypeScript extension system**, not shell hooks. Extensions are auto-discovered from `~/.pi/agent/extensions/*.js` (global) or `.pi/extensions/*.js` (project-local).
 
-The extension exports a default factory function receiving a `pi` API object. External commands are called via `pi.exec()`.
+The extension exports a default function receiving the `pi: ExtensionAPI` object. External commands are shelled out via Node's `child_process.execSync`, piping JSON to `suivi hook pre|stop` through a temp file.
 
 ```js
 // ~/.pi/agent/extensions/suivi.js
-export default (pi) => {
-  pi.on("before_agent_start", async (event, ctx) => {
-    const payload = JSON.stringify({
-      session_id: ctx.sessionManager?.currentSession?.id,
-      cwd: ctx.cwd,
+import { execSync } from "child_process";
+import { writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { basename, join } from "path";
+
+const sessionIdFrom = (ctx) => {
+  const file = ctx?.sessionManager?.getSessionFile?.();
+  if (!file) return null;
+  return basename(String(file)).replace(/\.[^.]+$/, "") || null;
+};
+
+const pipe = (cmd, payload, tag) => {
+  const tmp = join(tmpdir(), `suivi-${tag}.json`);
+  writeFileSync(tmp, payload);
+  try { execSync(`${cmd} < "${tmp}"`, { stdio: "ignore" }); }
+  finally { try { unlinkSync(tmp); } catch (_) {} }
+};
+
+export default function (pi) {
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const sid = sessionIdFrom(ctx);
+    if (!sid) return;
+    pipe("suivi hook pre", JSON.stringify({
+      session_id: sid,
+      cwd: ctx?.cwd ?? process.cwd(),
       agent: "pi",
-    });
-    await pi.exec("sh", ["-c", `echo '${payload}' | suivi hook pre`]);
+    }), `pre-${sid}`);
   });
 
-  pi.on("agent_end", async (event, ctx) => {
-    const payload = JSON.stringify({
-      session_id: ctx.sessionManager?.currentSession?.id,
-    });
-    await pi.exec("sh", ["-c", `echo '${payload}' | suivi hook stop`]);
+  pi.on("agent_end", async (_event, ctx) => {
+    const sid = sessionIdFrom(ctx);
+    if (!sid) return;
+    pipe("suivi hook stop", JSON.stringify({ session_id: sid }), `stop-${sid}`);
   });
-};
+}
 ```
 
 `suivi init` installs this file automatically when Pi is detected.
 
-**Note**: Session ID is not directly exposed in Pi's extension API — it must be accessed via `ctx.sessionManager`. This is tracked as an open question.
+**Note**: Pi exposes the session id as a file path via `ctx.sessionManager.getSessionFile()` (or `undefined` for ephemeral sessions). suivi uses the basename without extension as the opaque session id. Ephemeral sessions are silently dropped.
 
 ### OpenCode
 
 OpenCode uses a **JavaScript/TypeScript plugin system**. Plugins are registered at `~/.config/opencode/plugins/suivi.js` (global) or `.opencode/plugins/suivi.js` (project-local).
 
+The plugin exports an async default function receiving a destructured context (`{ project, client, $, directory, worktree }`) and returns an object of named event handlers. We subscribe to the generic `event` handler and switch on `event.type`.
+
 ```js
 // ~/.config/opencode/plugins/suivi.js
-export default function (ctx) {
-  ctx.on("session.created", () => {
-    const payload = JSON.stringify({
-      session_id: ctx.session.id,
-      cwd: ctx.directory,
-      agent: "opencode",
-      model: ctx.session.model,
-    });
-    require("child_process").execSync(`echo '${payload}' | suivi hook pre`);
-  });
+import { execSync } from "child_process";
+import { writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
-  ctx.on("session.idle", () => {
-    const payload = JSON.stringify({
-      session_id: ctx.session.id,
-    });
-    require("child_process").execSync(`echo '${payload}' | suivi hook stop`);
-  });
-}
+const sessionIdFrom = (event) => {
+  const p = event?.properties;
+  return p?.info?.id ?? p?.sessionID ?? p?.session_id ?? p?.session?.id ?? null;
+};
+
+const pipe = (cmd, payload, tag) => {
+  const tmp = join(tmpdir(), `suivi-${tag}-${Date.now()}.json`);
+  writeFileSync(tmp, payload);
+  try { execSync(`${cmd} < "${tmp}"`, { stdio: "ignore" }); }
+  finally { try { unlinkSync(tmp); } catch (_) {} }
+};
+
+export default async ({ directory, worktree } = {}) => ({
+  event: async ({ event }) => {
+    const sid = sessionIdFrom(event);
+    if (!sid) return;
+    if (event.type === "session.created") {
+      pipe("suivi hook pre", JSON.stringify({
+        session_id: sid,
+        cwd: directory ?? worktree ?? process.cwd(),
+        agent: "opencode",
+        model: event?.properties?.info?.model ?? null,
+      }), `pre-${sid}`);
+    } else if (event.type === "session.idle") {
+      pipe("suivi hook stop", JSON.stringify({ session_id: sid }), `stop-${sid}`);
+    }
+  },
+});
 ```
 
 `suivi init` installs this file automatically when OpenCode is detected.
 
-**Note**: OpenCode has no `UserPromptSubmit` equivalent. The closest events are `session.created` and `session.idle`. Turn granularity for OpenCode is coarser — tracked per session-idle cycle, not per individual prompt. This is a known limitation tracked in Open Questions.
+**Note**: OpenCode has no `UserPromptSubmit` equivalent. The closest events are `session.created` and `session.idle`. Turn granularity for OpenCode is coarser — tracked per session-idle cycle, not per individual prompt. This is a known limitation tracked in Open Questions. The exact JSON path to the session id inside an event payload is not pinned in OpenCode's public docs; suivi uses a defensive fallback chain (`event.properties.info.id` first) and silently drops turns when none resolves.
 
 ### Hook Payloads
 
@@ -440,6 +475,15 @@ First-time setup wizard and re-sync command:
 - If config does not exist: creates `~/.config/suivi/config.toml` interactively, asks for project paths, then proceeds to hook registration
 - If config already exists: prints "Config already exists at ~/.config/suivi/config.toml, skipping" and proceeds directly to hook sync
 - Always: detects installed agents, re-syncs hooks, never modifies an existing config file
+
+### `suivi doctor`
+
+Database maintenance. Reports counts of stale and beyond-retention turns; optionally prunes them.
+
+- *(default)* or `--check`: runs `PRAGMA integrity_check` against the SQLite database and reports `ok` or the error. Always prints DB status (stale-open turns >2h, turns older than `retention_days`).
+- `--prune`: deletes stale (`ended_at IS NULL` and started >2h ago) turns plus all turns older than `retention_days`. Reports the deletion counts. Skips the integrity check when `--prune` is the only flag, for speed.
+
+Run periodically if you suspect DB drift, or wire it into your shell startup. Pruning also runs automatically on `suivi init` re-runs and on every `suivi stats` invocation, so explicit `suivi doctor --prune` is rarely needed.
 
 ### `suivi status`
 
@@ -614,6 +658,6 @@ This guards against payload format changes breaking agent support silently.
 - Support for `PostToolUse` in addition to `Stop` for finer turn granularity (post-v1)
 - Idle detection beyond the buffer cap (post-v1)
 - Codex confirmed to provide `session_id` in hook payload — same protocol as Claude Code
-- Pi session ID access: verify whether `ctx.sessionManager?.currentSession?.id` is the correct path in the Pi extension API — required for Pi support
-- OpenCode session ID confirmed via `ctx.session.id`
+- Pi session ID: resolved via `ctx.sessionManager.getSessionFile()` (file path). suivi uses the basename (without extension) as the opaque session id. Ephemeral (`undefined`) sessions are silently dropped.
+- OpenCode session ID: extracted from event payload via defensive chain `event.properties.info.id ?? event.properties.sessionID ?? event.properties.session_id ?? event.properties.session?.id`. Pin to a single canonical path once OpenCode's plugin event types are stable.
 - OpenCode limitation: no `UserPromptSubmit` equivalent — tracking is per session-idle cycle, not per prompt. Consider whether to accept this coarser granularity or find a workaround (post-v1)
