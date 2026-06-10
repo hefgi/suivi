@@ -409,6 +409,60 @@ paths = ["/a", "/b", "/c"]
     }
 
     #[test]
+    fn test_find_project_overlapping_siblings_no_double_match() {
+        // Scenario: parent project plus two siblings under it.
+        //   ~/Enzyme
+        //   ~/Enzyme/onyx
+        //   ~/Enzyme/myso
+        // A cwd under onyx must resolve to onyx, never to both onyx + Enzyme.
+        let dir = TempDir::new().unwrap();
+        let enzyme = dir.path().join("Enzyme");
+        let onyx = enzyme.join("onyx");
+        let myso = enzyme.join("myso");
+        let onyx_deep = onyx.join("deep").join("subdir");
+        let myso_deep = myso.join("sub");
+        let enzyme_only = enzyme.join("just-a-file");
+        std::fs::create_dir_all(&onyx_deep).unwrap();
+        std::fs::create_dir_all(&myso_deep).unwrap();
+        std::fs::create_dir_all(&enzyme_only).unwrap();
+
+        let config = Config {
+            tracking: Tracking::default(),
+            projects: vec![
+                ProjectEntry {
+                    path: enzyme.to_str().unwrap().to_string(),
+                    name: Some("Enzyme".to_string()),
+                },
+                ProjectEntry {
+                    path: onyx.to_str().unwrap().to_string(),
+                    name: Some("onyx".to_string()),
+                },
+                ProjectEntry {
+                    path: myso.to_str().unwrap().to_string(),
+                    name: Some("myso".to_string()),
+                },
+            ],
+        };
+
+        // cwd deep under onyx → onyx wins (deepest ancestor)
+        let (entry, path) = find_project(&config, onyx_deep.to_str().unwrap()).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("onyx"));
+        assert_eq!(path, onyx);
+
+        // cwd deep under myso → myso wins
+        let (entry, _) = find_project(&config, myso_deep.to_str().unwrap()).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("myso"));
+
+        // cwd under Enzyme but NOT under onyx or myso → Enzyme wins
+        let (entry, _) = find_project(&config, enzyme_only.to_str().unwrap()).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("Enzyme"));
+
+        // cwd exactly at Enzyme → Enzyme wins
+        let (entry, _) = find_project(&config, enzyme.to_str().unwrap()).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("Enzyme"));
+    }
+
+    #[test]
     fn test_find_project_name_optional() {
         let dir = TempDir::new().unwrap();
         let config = Config {
