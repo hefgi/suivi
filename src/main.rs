@@ -34,6 +34,15 @@ fn main() {
     }
 }
 
+/// Start-of-today UTC as RFC3339.
+fn today_start_rfc3339() -> Option<String> {
+    chrono::Utc::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc))
+        .map(|d| d.to_rfc3339())
+}
+
 /// Resolve --today/--week/--month/--since/--all into an optional RFC3339 lower bound.
 /// Returns None for --all (no lower bound). Returns None for the default case too —
 /// the default stats view manages its own time windows internally.
@@ -45,18 +54,14 @@ fn resolve_since(args: &cli::StatsArgs) -> Option<String> {
     if let Some(date_str) = &args.since {
         // Parse YYYY-MM-DD
         if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-            let dt = date
-                .and_hms_opt(0, 0, 0)
-                .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc));
+            let dt = date.and_hms_opt(0, 0, 0).map(|naive| {
+                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
+            });
             return dt.map(|d| d.to_rfc3339());
         }
     }
     if args.today {
-        let start = now
-            .date_naive()
-            .and_hms_opt(0, 0, 0)
-            .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc));
-        return start.map(|d| d.to_rfc3339());
+        return today_start_rfc3339();
     }
     if args.week {
         return Some((now - chrono::Duration::days(7)).to_rfc3339());
@@ -88,7 +93,13 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
     }
 
     // --agent scoped view (Gap #7): when --agent is set with no other mode flag and no --project
-    if args.agent.is_some() && !args.projects && !args.history && !args.graph && !args.daily && args.project.is_none() {
+    if args.agent.is_some()
+        && !args.projects
+        && !args.history
+        && !args.graph
+        && !args.daily
+        && args.project.is_none()
+    {
         return analytics::agent_view::run(
             args.agent.as_deref().unwrap(),
             since.as_deref(),
@@ -104,10 +115,11 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
         };
         analytics::projects::run(query_since.as_deref(), args.agent.as_deref())?;
     } else if args.history {
+        // PRD: --history defaults to today when no time flag is supplied.
         let query_since = if has_time_flag {
             since.clone()
         } else {
-            Some((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339())
+            today_start_rfc3339()
         };
         analytics::history::run(
             query_since.as_deref(),
