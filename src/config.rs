@@ -82,10 +82,13 @@ impl From<ConfigV0> for Config {
                 .into_iter()
                 .flat_map(|e| {
                     let name = e.name.clone();
-                    e.paths.into_iter().enumerate().map(move |(i, p)| ProjectEntry {
-                        path: p,
-                        name: if i == 0 { name.clone() } else { None },
-                    })
+                    e.paths
+                        .into_iter()
+                        .enumerate()
+                        .map(move |(i, p)| ProjectEntry {
+                            path: p,
+                            name: if i == 0 { name.clone() } else { None },
+                        })
                 })
                 .collect(),
         }

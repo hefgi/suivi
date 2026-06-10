@@ -52,8 +52,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
 
     // Activity graph (last 30 days)
     let graph_since = (now - chrono::Duration::days(30)).to_rfc3339();
-    let graph_turns =
-        db::query_turns(&conn, Some(&graph_since), matched_path.as_deref(), None)?;
+    let graph_turns = db::query_turns(&conn, Some(&graph_since), matched_path.as_deref(), None)?;
     let graph_turns = filter_by_name(&graph_turns, project_name, matched_path.as_deref());
     if !graph_turns.is_empty() {
         println!("  {}", "Activity (last 30 days)".bold());
@@ -70,8 +69,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
         if t.ended_at.is_none() {
             continue;
         }
-        *by_agent.entry(t.agent.clone()).or_default() +=
-            t.effective_duration_secs.unwrap_or(0.0);
+        *by_agent.entry(t.agent.clone()).or_default() += t.effective_duration_secs.unwrap_or(0.0);
     }
 
     if !by_agent.is_empty() {

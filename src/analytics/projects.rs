@@ -30,30 +30,28 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
 
     let mut projects: Vec<(String, Vec<usize>)> = by_project.into_iter().collect();
     projects.sort_by(|a, b| {
-        let a_acc: f64 = a
-            .1
-            .iter()
-            .filter_map(|&i| {
-                let t = &turns[i];
-                if t.ended_at.is_some() {
-                    t.effective_duration_secs
-                } else {
-                    None
-                }
-            })
-            .sum();
-        let b_acc: f64 = b
-            .1
-            .iter()
-            .filter_map(|&i| {
-                let t = &turns[i];
-                if t.ended_at.is_some() {
-                    t.effective_duration_secs
-                } else {
-                    None
-                }
-            })
-            .sum();
+        let a_acc: f64 =
+            a.1.iter()
+                .filter_map(|&i| {
+                    let t = &turns[i];
+                    if t.ended_at.is_some() {
+                        t.effective_duration_secs
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+        let b_acc: f64 =
+            b.1.iter()
+                .filter_map(|&i| {
+                    let t = &turns[i];
+                    if t.ended_at.is_some() {
+                        t.effective_duration_secs
+                    } else {
+                        None
+                    }
+                })
+                .sum();
         b_acc
             .partial_cmp(&a_acc)
             .unwrap_or(std::cmp::Ordering::Equal)

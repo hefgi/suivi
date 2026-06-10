@@ -60,7 +60,10 @@ pub fn run() -> Result<()> {
     } else {
         let projects = paths
             .into_iter()
-            .map(|p| config::ProjectEntry { path: p, name: None })
+            .map(|p| config::ProjectEntry {
+                path: p,
+                name: None,
+            })
             .collect();
 
         let cfg = config::Config {
