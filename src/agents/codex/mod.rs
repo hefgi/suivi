@@ -138,4 +138,34 @@ mod tests {
         assert_eq!(agent.id(), "codex");
         assert_eq!(agent.display_name(), "Codex");
     }
+
+    #[test]
+    fn test_hook_templates_have_nested_claude_code_shape() {
+        // PRD: Codex uses identical protocol to Claude Code, so each template must
+        // wrap its command in an inner `hooks` array of {type, command} objects.
+        let agent = CodexAgent;
+        let templates = agent.hook_templates();
+        for file in &templates.files {
+            let v: serde_json::Value = serde_json::from_str(&file.content).expect("valid JSON");
+            let events = v
+                .get("hooks")
+                .and_then(|h| h.as_object())
+                .expect("top-level hooks object");
+            assert_eq!(events.len(), 1, "exactly one event per template");
+            let (_, arr) = events.iter().next().unwrap();
+            let outer = arr.as_array().expect("event maps to array");
+            assert_eq!(outer.len(), 1);
+            let inner = outer[0]
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .expect("nested hooks array");
+            assert_eq!(inner.len(), 1);
+            assert_eq!(
+                inner[0].get("type").and_then(|t| t.as_str()),
+                Some("command")
+            );
+            let cmd = inner[0].get("command").and_then(|c| c.as_str()).unwrap();
+            assert!(cmd.starts_with("suivi hook "));
+        }
+    }
 }

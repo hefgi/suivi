@@ -2,7 +2,12 @@
   "hooks": {
     "Stop": [
       {
-        "command": "suivi hook stop"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "suivi hook stop"
+          }
+        ]
       }
     ]
   }

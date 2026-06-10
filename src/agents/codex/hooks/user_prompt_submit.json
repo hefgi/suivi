@@ -2,7 +2,12 @@
   "hooks": {
     "UserPromptSubmit": [
       {
-        "command": "suivi hook pre"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "suivi hook pre"
+          }
+        ]
       }
     ]
   }
