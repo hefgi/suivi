@@ -23,11 +23,7 @@ pub fn run() -> Result<()> {
 
     println!("  {:<10} {}", "Config".dimmed(), config_path.display());
     println!("  {:<10} {}", "Database".dimmed(), db_path.display());
-    println!(
-        "  {:<10} {} tracked",
-        "Projects".dimmed(),
-        project_count
-    );
+    println!("  {:<10} {} tracked", "Projects".dimmed(), project_count);
     println!();
 
     // Hook health
@@ -89,7 +85,7 @@ pub fn run() -> Result<()> {
             *by_cwd.entry(t.cwd.as_str()).or_default() += 1;
         }
         let mut cwd_counts: Vec<(&str, usize)> = by_cwd.into_iter().collect();
-        cwd_counts.sort_by(|a, b| b.1.cmp(&a.1));
+        cwd_counts.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         println!("  Top untracked paths:");
         for (cwd, count) in cwd_counts.iter().take(5) {
