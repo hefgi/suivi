@@ -13,11 +13,14 @@ impl Agent for ClaudeCodeAgent {
     }
 
     fn detect(&self, env: &Env) -> bool {
-        env.vars.contains_key("CLAUDE_HOOK_EVENT")
+        // Claude Code sets `CLAUDECODE=1` and `CLAUDE_CODE_*` in the environment of
+        // every spawned hook process. Parent process is the `claude` binary.
+        env.vars.contains_key("CLAUDECODE")
+            || env.vars.contains_key("CLAUDE_CODE_ENTRYPOINT")
             || env
                 .parent_process_name
                 .as_deref()
-                .map(|n| n.contains("claude"))
+                .map(|n| n == "claude" || n.contains("claude-code"))
                 .unwrap_or(false)
     }
 
@@ -84,7 +87,8 @@ mod tests {
     #[test]
     fn test_detect_by_env_var() {
         let agent = ClaudeCodeAgent;
-        assert!(agent.detect(&env_with(&[("CLAUDE_HOOK_EVENT", "UserPromptSubmit")])));
+        assert!(agent.detect(&env_with(&[("CLAUDECODE", "1")])));
+        assert!(agent.detect(&env_with(&[("CLAUDE_CODE_ENTRYPOINT", "cli")])));
         assert!(!agent.detect(&env_with(&[("OTHER_VAR", "value")])));
     }
 
