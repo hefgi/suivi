@@ -97,16 +97,50 @@ impl From<ConfigV0> for Config {
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
+/// Returns `$XDG_CONFIG_HOME/suivi/config.toml` if set, otherwise `~/.config/suivi/config.toml`.
+/// PRD specifies XDG paths on every OS; we don't follow `dirs::config_dir()` on macOS because
+/// it returns `~/Library/Application Support`, which violates the spec.
 pub fn config_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"))
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+        .unwrap_or_else(|| PathBuf::from(".config"));
+    base.join("suivi").join("config.toml")
+}
+
+/// One-shot migration from the legacy macOS path
+/// (`~/Library/Application Support/suivi/config.toml`) to the XDG-spec'd location.
+/// Runs at most once: if the XDG target already exists, does nothing.
+/// No-op on non-macOS systems.
+pub fn migrate_legacy_macos_config() {
+    if cfg!(not(target_os = "macos")) {
+        return;
+    }
+    let target = config_path();
+    if target.exists() {
+        return;
+    }
+    let Some(home) = dirs::home_dir() else { return };
+    let legacy = home
+        .join("Library")
+        .join("Application Support")
         .join("suivi")
-        .join("config.toml")
+        .join("config.toml");
+    if !legacy.exists() {
+        return;
+    }
+    if let Some(parent) = target.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    let _ = std::fs::rename(&legacy, &target);
 }
 
 // ── Load / Save ───────────────────────────────────────────────────────────────
 
 pub fn load() -> Result<Config, SuiviError> {
+    migrate_legacy_macos_config();
     let path = config_path();
     if !path.exists() {
         return Ok(Config::default());
@@ -151,7 +185,7 @@ pub fn save_to(config: &Config, path: &Path) -> Result<(), SuiviError> {
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
-fn expand_tilde(s: &str) -> String {
+pub fn expand_tilde(s: &str) -> String {
     if let Some(rest) = s.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
             return format!("{}/{}", home.display(), rest);

@@ -2,16 +2,48 @@ use crate::error::SuiviError;
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 
+/// Returns `$XDG_DATA_HOME/suivi/history.db` if set, otherwise `~/.local/share/suivi/history.db`.
+/// PRD specifies XDG paths on every OS; we don't follow `dirs::data_local_dir()` on macOS because
+/// it returns `~/Library/Application Support`, which violates the spec.
 pub fn db_path() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/share")
-        })
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from(".local/share"));
+    base.join("suivi").join("history.db")
+}
+
+/// One-shot migration from the legacy macOS path
+/// (`~/Library/Application Support/suivi/history.db`) to the XDG-spec'd location.
+/// Runs at most once: if the XDG target already exists, does nothing.
+/// No-op on non-macOS systems.
+fn migrate_legacy_macos_db() {
+    if cfg!(not(target_os = "macos")) {
+        return;
+    }
+    let target = db_path();
+    if target.exists() {
+        return;
+    }
+    let Some(home) = dirs::home_dir() else { return };
+    let legacy = home
+        .join("Library")
+        .join("Application Support")
         .join("suivi")
-        .join("history.db")
+        .join("history.db");
+    if !legacy.exists() {
+        return;
+    }
+    if let Some(parent) = target.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    let _ = std::fs::rename(&legacy, &target);
 }
 
 pub fn open() -> Result<Connection, SuiviError> {
+    migrate_legacy_macos_db();
     let path = db_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
