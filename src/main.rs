@@ -6,11 +6,15 @@ mod config;
 mod db;
 mod error;
 mod hooks;
+mod logging;
 
 use clap::Parser;
 use cli::{Cli, Command, HookEvent};
 
 fn main() {
+    // _log_guard holds the non-blocking log writer's worker handle until the
+    // end of main() so pending log events are flushed on exit.
+    let _log_guard = logging::init();
     let cli = Cli::parse();
     let result: Result<(), String> = match cli.command {
         Command::Hook(args) => {
@@ -23,7 +27,7 @@ fn main() {
         Command::Init => commands::init::run().map_err(|e| e.to_string()),
         Command::Status => commands::status::run().map_err(|e| e.to_string()),
         Command::Doctor(args) => {
-            commands::doctor::run(args.prune, args.check).map_err(|e| e.to_string())
+            commands::doctor::run(args.prune, args.check, args.logs).map_err(|e| e.to_string())
         }
         Command::Stats(args) => handle_stats(args).map_err(|e| e.to_string()),
     };
