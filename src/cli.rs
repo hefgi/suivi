@@ -99,6 +99,11 @@ pub struct DoctorArgs {
     /// Run SQLite PRAGMA integrity_check
     #[arg(long)]
     pub check: bool,
+
+    /// Print the last N lines from the suivi log (default 50 if no N given).
+    /// Logs are only written when SUIVI_LOG is set.
+    #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "50")]
+    pub logs: Option<usize>,
 }
 
 #[derive(ValueEnum, Clone, Default)]

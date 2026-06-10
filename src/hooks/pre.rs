@@ -1,30 +1,61 @@
 use crate::{agents, config, db};
 use chrono::Utc;
 use std::io::Read;
+use tracing::{debug, info, instrument, warn};
 
 pub fn handle_pre() {
-    let _ = run();
+    if let Err(e) = run() {
+        warn!(error = %e, "hook pre failed");
+    }
 }
 
+#[instrument(skip_all, name = "hook_pre")]
 fn run() -> Result<(), anyhow::Error> {
     let mut stdin = String::new();
     std::io::stdin().read_to_string(&mut stdin)?;
     let stdin = stdin.trim().to_string();
     if stdin.is_empty() {
+        debug!("empty stdin; no-op");
         return Ok(());
     }
+    debug!(stdin_len = stdin.len(), stdin = %stdin, "received payload");
 
     let env = agents::Env::capture();
+    debug!(
+        parent_process = ?env.parent_process_name,
+        agent_env_vars = ?env
+            .vars
+            .keys()
+            .filter(|k| {
+                let u = k.to_ascii_uppercase();
+                u.starts_with("CLAUDE") || u.starts_with("CODEX")
+                    || u.starts_with("OPENCODE") || u.starts_with("PI_")
+            })
+            .collect::<Vec<_>>(),
+        "captured env"
+    );
     let all = agents::all_agents();
     let agent = all.iter().find(|a| a.detect(&env));
     let agent = match agent {
-        Some(a) => a,
-        None => return Ok(()),
+        Some(a) => {
+            debug!(agent_id = a.id(), "agent detected");
+            a
+        }
+        None => {
+            warn!("no agent matched; dropping turn");
+            return Ok(());
+        }
     };
 
     let payload = match agent.parse_payload(&stdin) {
         Some(p) => p,
-        None => return Ok(()),
+        None => {
+            warn!(
+                agent_id = agent.id(),
+                "parse_payload returned None (missing session_id?); dropping turn"
+            );
+            return Ok(());
+        }
     };
 
     let config = config::load().unwrap_or_default();
@@ -36,7 +67,10 @@ fn run() -> Result<(), anyhow::Error> {
                 .or_else(|| path.file_name().map(|n| n.to_string_lossy().to_string()));
             (Some(path.to_string_lossy().to_string()), name)
         }
-        None => (None, None),
+        None => {
+            debug!(cwd = %payload.cwd, "cwd does not match any tracked project");
+            (None, None)
+        }
     };
 
     let conn = db::open()?;
@@ -50,13 +84,22 @@ fn run() -> Result<(), anyhow::Error> {
             if gap_secs >= 0.0 && gap_secs < buffer_secs * 2.0 {
                 let agent_t = prev.agent_duration_secs.unwrap_or(0.0);
                 let new_effective = gap_secs + agent_t;
-                let _ = db::correct_effective_duration(&conn, prev.id, new_effective);
+                if let Err(e) = db::correct_effective_duration(&conn, prev.id, new_effective) {
+                    warn!(error = %e, prev_turn_id = prev.id, "failed to correct previous turn duration");
+                } else {
+                    debug!(
+                        prev_turn_id = prev.id,
+                        gap_secs,
+                        new_effective_secs = new_effective,
+                        "corrected previous turn duration"
+                    );
+                }
             }
         }
     }
 
     let started_at = now.to_rfc3339();
-    db::insert_turn(
+    let id = db::insert_turn(
         &conn,
         &db::TurnInsert {
             session_id: &payload.session_id,
@@ -68,6 +111,15 @@ fn run() -> Result<(), anyhow::Error> {
             project_name: project_name.as_deref(),
         },
     )?;
+
+    info!(
+        turn_id = id,
+        session_id = %payload.session_id,
+        agent = agent.id(),
+        project = ?project_name,
+        cwd = %payload.cwd,
+        "turn inserted"
+    );
 
     Ok(())
 }

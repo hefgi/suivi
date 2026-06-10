@@ -1,27 +1,39 @@
 use crate::{config, db};
 use chrono::Utc;
 use std::io::Read;
+use tracing::{debug, info, instrument, warn};
 
 pub fn handle_stop() {
-    let _ = run();
+    if let Err(e) = run() {
+        warn!(error = %e, "hook stop failed");
+    }
 }
 
+#[instrument(skip_all, name = "hook_stop")]
 fn run() -> Result<(), anyhow::Error> {
     let mut stdin = String::new();
     std::io::stdin().read_to_string(&mut stdin)?;
     let stdin = stdin.trim().to_string();
     if stdin.is_empty() {
+        debug!("empty stdin; no-op");
         return Ok(());
     }
+    debug!(stdin = %stdin, "received payload");
 
     // Stop payloads don't include cwd — read session_id and duration_ms directly.
     let v: serde_json::Value = match serde_json::from_str(&stdin) {
         Ok(v) => v,
-        Err(_) => return Ok(()),
+        Err(e) => {
+            warn!(error = %e, "stop payload is not valid JSON; dropping");
+            return Ok(());
+        }
     };
     let session_id = match v.get("session_id").and_then(|s| s.as_str()) {
         Some(s) => s.to_string(),
-        None => return Ok(()),
+        None => {
+            warn!("stop payload missing session_id; dropping");
+            return Ok(());
+        }
     };
     let duration_ms: Option<f64> = v.get("duration_ms").and_then(|d| d.as_f64());
     let transcript_path: Option<&str> = v.get("transcript_path").and_then(|s| s.as_str());
@@ -34,7 +46,13 @@ fn run() -> Result<(), anyhow::Error> {
     let conn = db::open()?;
     let open_turn = match db::last_open_turn(&conn, &session_id)? {
         Some(t) => t,
-        None => return Ok(()),
+        None => {
+            warn!(
+                session_id = %session_id,
+                "no open turn found for session; stop fired without matching pre?"
+            );
+            return Ok(());
+        }
     };
 
     let ended_at = Utc::now().to_rfc3339();
@@ -42,17 +60,36 @@ fn run() -> Result<(), anyhow::Error> {
         &conn,
         open_turn.id,
         &db::TurnStop {
-            ended_at,
+            ended_at: ended_at.clone(),
             agent_duration_secs,
             effective_duration_secs,
         },
     )?;
+    info!(
+        turn_id = open_turn.id,
+        session_id = %session_id,
+        agent_duration_secs,
+        effective_duration_secs,
+        "turn closed"
+    );
 
     // Claude Code's UserPromptSubmit payload omits the model, so we read it
     // from the transcript at Stop time. Best-effort: ignore parse failures.
     if let Some(path) = transcript_path {
-        if let Some(model) = read_last_assistant_model(path) {
-            let _ = db::set_model(&conn, open_turn.id, &model);
+        match read_last_assistant_model(path) {
+            Some(model) => {
+                if let Err(e) = db::set_model(&conn, open_turn.id, &model) {
+                    warn!(error = %e, "failed to write model");
+                } else {
+                    debug!(turn_id = open_turn.id, model = %model, "model captured from transcript");
+                }
+            }
+            None => {
+                debug!(
+                    transcript_path = path,
+                    "no assistant model found in transcript"
+                );
+            }
         }
     }
 

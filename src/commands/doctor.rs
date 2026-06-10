@@ -1,9 +1,13 @@
 use anyhow::Result;
 use colored::Colorize;
 
-use crate::{config, db};
+use crate::{config, db, logging};
 
-pub fn run(prune: bool, check: bool) -> Result<()> {
+pub fn run(prune: bool, check: bool, logs: Option<usize>) -> Result<()> {
+    if let Some(n) = logs {
+        return print_logs(n);
+    }
+
     let conn = db::open()?;
 
     // Show integrity check by default, and when --check is passed explicitly.
@@ -47,6 +51,55 @@ pub fn run(prune: bool, check: bool) -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+/// Print the last `n` lines from suivi log files. Reads every `suivi.log*` file
+/// in the log dir (rolling appender writes `suivi.log.YYYY-MM-DD` per day),
+/// concatenates them in date order, and tails the last `n` lines.
+fn print_logs(n: usize) -> Result<()> {
+    let dir = logging::log_dir();
+    if !dir.exists() {
+        println!(
+            "No logs found. Logs are only written when {} is set.",
+            "SUIVI_LOG".cyan()
+        );
+        println!("Try: {}", "SUIVI_LOG=debug suivi stats".cyan());
+        return Ok(());
+    }
+
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|f| f.to_str())
+                .map(|f| f.starts_with("suivi.log"))
+                .unwrap_or(false)
+        })
+        .collect();
+    files.sort();
+
+    if files.is_empty() {
+        println!(
+            "No logs found in {}. Logs are only written when {} is set.",
+            dir.display(),
+            "SUIVI_LOG".cyan()
+        );
+        return Ok(());
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    for f in &files {
+        if let Ok(content) = std::fs::read_to_string(f) {
+            lines.extend(content.lines().map(|s| s.to_string()));
+        }
+    }
+
+    let start = lines.len().saturating_sub(n);
+    for line in &lines[start..] {
+        println!("{}", line);
+    }
     Ok(())
 }
 
