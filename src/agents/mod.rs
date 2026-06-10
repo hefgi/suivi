@@ -22,16 +22,28 @@ impl Env {
     }
 
     fn detect_parent() -> Option<String> {
-        let ppid = std::env::var("PPID").ok()?;
+        // The shell-set $PPID is unavailable when Claude Code (or any agent) spawns
+        // `suivi hook pre|stop` directly without going through a shell. Use the
+        // actual kernel-reported parent pid via libc::getppid().
+        // SAFETY: getppid is always safe; it returns the calling process's parent pid.
+        let ppid = unsafe { libc::getppid() };
+        if ppid <= 1 {
+            return None;
+        }
         let output = std::process::Command::new("ps")
-            .args(["-p", &ppid, "-o", "comm="])
+            .args(["-p", &ppid.to_string(), "-o", "comm="])
             .output()
             .ok()?;
         let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
         if name.is_empty() {
             None
         } else {
-            Some(name)
+            // ps may return the full executable path; we just want the basename.
+            let basename = std::path::Path::new(&name)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or(name);
+            Some(basename)
         }
     }
 }
