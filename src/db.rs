@@ -208,22 +208,18 @@ pub fn query_turns(
 
     if let Some(s) = since {
         sql.push_str(" AND started_at >= ?");
-        sql.push_str(&(param_values.len() + 1).to_string());
         param_values.push(s.to_string());
     }
     if let Some(p) = project_path {
         sql.push_str(" AND project_path = ?");
-        sql.push_str(&(param_values.len() + 1).to_string());
         param_values.push(p.to_string());
     }
     if let Some(a) = agent {
         sql.push_str(" AND agent = ?");
-        sql.push_str(&(param_values.len() + 1).to_string());
         param_values.push(a.to_string());
     }
     sql.push_str(" ORDER BY started_at ASC");
 
-    // Build query with dynamic parameters
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(param_values.iter()), |row| {
         Ok(TurnRow {
@@ -549,5 +545,47 @@ mod tests {
         let rows = query_turns(&conn, None, Some("/proj/a"), None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].agent, "claude-code");
+    }
+
+    #[test]
+    fn test_query_turns_multi_filter_positional_binding() {
+        let (conn, _dir) = test_conn();
+        for (sess, proj, agent, started) in [
+            ("s1", "/proj/a", "claude-code", "2024-06-01T10:00:00Z"),
+            ("s2", "/proj/a", "codex", "2024-06-02T10:00:00Z"),
+            ("s3", "/proj/b", "claude-code", "2024-06-02T10:00:00Z"),
+            ("s4", "/proj/a", "claude-code", "2024-05-01T10:00:00Z"),
+        ] {
+            let turn = TurnInsert {
+                session_id: sess,
+                started_at: started,
+                cwd: proj,
+                agent,
+                model: None,
+                project_path: Some(proj),
+                project_name: None,
+            };
+            let id = insert_turn(&conn, &turn).unwrap();
+            stop_turn(
+                &conn,
+                id,
+                &TurnStop {
+                    ended_at: format!("{}", started),
+                    agent_duration_secs: 1.0,
+                    effective_duration_secs: 1.0,
+                },
+            )
+            .unwrap();
+        }
+        // since + project + agent all together; only "s1" matches.
+        let rows = query_turns(
+            &conn,
+            Some("2024-06-01T00:00:00Z"),
+            Some("/proj/a"),
+            Some("claude-code"),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session_id, "s1");
     }
 }
