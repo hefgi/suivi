@@ -1,11 +1,81 @@
 use anyhow::Result;
 use colored::Colorize;
+use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::cli::OutputFormat;
+use crate::db::TurnRow;
 use crate::{config, db};
 
 use super::{accumulated_secs, format_duration, sessions_column, wall_clock_secs};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StatsSummaryRow {
+    pub window: String,
+    pub turns: usize,
+    pub wall_clock_secs: f64,
+    pub accumulated_secs: f64,
+}
+
+pub fn summary_to_json(rows: &[StatsSummaryRow]) -> Result<String> {
+    Ok(serde_json::to_string_pretty(rows)?)
+}
+
+pub fn summary_to_csv(rows: &[StatsSummaryRow]) -> String {
+    let mut out = String::from("window,turns,wall_clock_secs,accumulated_secs\n");
+    for r in rows {
+        out.push_str(&format!(
+            "{},{},{},{}\n",
+            r.window, r.turns, r.wall_clock_secs, r.accumulated_secs
+        ));
+    }
+    out
+}
+
+fn collect_summary_rows(
+    conn: &rusqlite::Connection,
+    windows: &[(&str, Option<String>)],
+    project: Option<&str>,
+    agent_filter: Option<&str>,
+    buffer_secs: u32,
+) -> Result<Vec<StatsSummaryRow>> {
+    let mut rows = Vec::with_capacity(windows.len());
+    for (label, win_since) in windows {
+        let turns = db::query_turns(conn, win_since.as_deref(), project, agent_filter)?;
+        let turn_count = turns.iter().filter(|t| t.ended_at.is_some()).count();
+        let wall = wall_clock_secs(&turns, buffer_secs);
+        let accum = accumulated_secs(&turns);
+        rows.push(StatsSummaryRow {
+            window: label.to_string(),
+            turns: turn_count,
+            wall_clock_secs: wall,
+            accumulated_secs: accum,
+        });
+    }
+    Ok(rows)
+}
+
+pub fn turns_to_json_full(turns: &[TurnRow]) -> Result<String> {
+    let entries: Vec<serde_json::Value> = turns
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "session_id": t.session_id,
+                "started_at": t.started_at,
+                "ended_at": t.ended_at,
+                "project_path": t.project_path,
+                "project_name": t.project_name,
+                "cwd": t.cwd,
+                "agent": t.agent,
+                "model": t.model,
+                "agent_duration_secs": t.agent_duration_secs,
+                "effective_duration_secs": t.effective_duration_secs,
+            })
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&entries)?)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
@@ -58,52 +128,27 @@ pub fn run(
             // Full turn-level export when --all, summary rows otherwise (Gap #11)
             if all_time {
                 let turns = db::query_turns(&conn, None, project, agent_filter)?;
-                let entries: Vec<serde_json::Value> = turns
-                    .iter()
-                    .map(|t| {
-                        serde_json::json!({
-                            "id": t.id,
-                            "session_id": t.session_id,
-                            "started_at": t.started_at,
-                            "ended_at": t.ended_at,
-                            "project_path": t.project_path,
-                            "project_name": t.project_name,
-                            "cwd": t.cwd,
-                            "agent": t.agent,
-                            "model": t.model,
-                            "agent_duration_secs": t.agent_duration_secs,
-                            "effective_duration_secs": t.effective_duration_secs,
-                        })
-                    })
-                    .collect();
-                println!("{}", serde_json::to_string_pretty(&entries)?);
+                println!("{}", turns_to_json_full(&turns)?);
             } else {
-                let mut entries = Vec::new();
-                for (label, win_since) in &windows {
-                    let turns =
-                        db::query_turns(&conn, win_since.as_deref(), project, agent_filter)?;
-                    let turn_count = turns.iter().filter(|t| t.ended_at.is_some()).count();
-                    let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
-                    let accum = accumulated_secs(&turns);
-                    entries.push(serde_json::json!({
-                        "window": label,
-                        "turns": turn_count,
-                        "wall_clock_secs": wall,
-                        "accumulated_secs": accum,
-                    }));
-                }
-                println!("{}", serde_json::to_string_pretty(&entries)?);
+                let rows = collect_summary_rows(
+                    &conn,
+                    &windows,
+                    project,
+                    agent_filter,
+                    cfg.tracking.human_buffer_secs,
+                )?;
+                println!("{}", summary_to_json(&rows)?);
             }
         }
         OutputFormat::Csv => {
-            println!("window,turns,wall_clock_secs,accumulated_secs");
-            for (label, win_since) in &windows {
-                let turns = db::query_turns(&conn, win_since.as_deref(), project, agent_filter)?;
-                let turn_count = turns.iter().filter(|t| t.ended_at.is_some()).count();
-                let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
-                let accum = accumulated_secs(&turns);
-                println!("{},{},{},{}", label, turn_count, wall, accum);
-            }
+            let rows = collect_summary_rows(
+                &conn,
+                &windows,
+                project,
+                agent_filter,
+                cfg.tracking.human_buffer_secs,
+            )?;
+            print!("{}", summary_to_csv(&rows));
         }
         OutputFormat::Text => {
             println!("{}", "suivi — Summary".bold());
@@ -128,8 +173,7 @@ pub fn run(
 
             // Top projects (this week) — Gap #3
             let week_since = (now - chrono::Duration::days(7)).to_rfc3339();
-            let week_turns =
-                db::query_turns(&conn, Some(&week_since), project, agent_filter)?;
+            let week_turns = db::query_turns(&conn, Some(&week_since), project, agent_filter)?;
 
             if !week_turns.iter().any(|t| t.ended_at.is_some()) {
                 // No data this week — skip the sections
@@ -158,24 +202,21 @@ pub fn run(
 
             let mut projects: Vec<(String, Vec<usize>)> = by_project.into_iter().collect();
             projects.sort_by(|a, b| {
-                let a_acc: f64 = a
-                    .1
-                    .iter()
-                    .filter_map(|&i| week_turns[i].effective_duration_secs)
-                    .sum();
-                let b_acc: f64 = b
-                    .1
-                    .iter()
-                    .filter_map(|&i| week_turns[i].effective_duration_secs)
-                    .sum();
-                b_acc.partial_cmp(&a_acc).unwrap_or(std::cmp::Ordering::Equal)
+                let a_acc: f64 =
+                    a.1.iter()
+                        .filter_map(|&i| week_turns[i].effective_duration_secs)
+                        .sum();
+                let b_acc: f64 =
+                    b.1.iter()
+                        .filter_map(|&i| week_turns[i].effective_duration_secs)
+                        .sum();
+                b_acc
+                    .partial_cmp(&a_acc)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
 
             println!("  {}", "Top projects (this week)".bold());
-            println!(
-                "  {}",
-                "━".repeat(80)
-            );
+            println!("  {}", "━".repeat(80));
             println!(
                 "  {:<16}  {:>10}  {:>11}  {:>5}  {}",
                 "Project".bold(),
@@ -194,8 +235,7 @@ pub fn run(
                         .filter_map(|&i| {
                             let t = &week_turns[i];
                             t.ended_at.as_ref()?;
-                            let start =
-                                chrono::DateTime::parse_from_rfc3339(&t.started_at).ok()?;
+                            let start = chrono::DateTime::parse_from_rfc3339(&t.started_at).ok()?;
                             let end =
                                 chrono::DateTime::parse_from_rfc3339(t.ended_at.as_ref()?).ok()?;
                             Some((
@@ -275,4 +315,95 @@ pub fn run(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn turn_fixture() -> Vec<TurnRow> {
+        vec![TurnRow {
+            id: 7,
+            session_id: "s7".to_string(),
+            started_at: "2024-06-01T10:00:00Z".to_string(),
+            ended_at: Some("2024-06-01T10:05:00Z".to_string()),
+            project_path: Some("/proj/a".to_string()),
+            project_name: Some("a".to_string()),
+            cwd: "/proj/a".to_string(),
+            agent: "claude-code".to_string(),
+            model: Some("sonnet".to_string()),
+            agent_duration_secs: Some(30.0),
+            effective_duration_secs: Some(630.0),
+        }]
+    }
+
+    #[test]
+    fn test_summary_to_json_snapshot() {
+        let rows = vec![
+            StatsSummaryRow {
+                window: "Today".to_string(),
+                turns: 3,
+                wall_clock_secs: 100.0,
+                accumulated_secs: 250.0,
+            },
+            StatsSummaryRow {
+                window: "All time".to_string(),
+                turns: 42,
+                wall_clock_secs: 9999.5,
+                accumulated_secs: 12345.5,
+            },
+        ];
+        let out = summary_to_json(&rows).unwrap();
+        let expected = r#"[
+  {
+    "window": "Today",
+    "turns": 3,
+    "wall_clock_secs": 100.0,
+    "accumulated_secs": 250.0
+  },
+  {
+    "window": "All time",
+    "turns": 42,
+    "wall_clock_secs": 9999.5,
+    "accumulated_secs": 12345.5
+  }
+]"#;
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn test_summary_to_csv_snapshot() {
+        let rows = vec![StatsSummaryRow {
+            window: "Today".to_string(),
+            turns: 3,
+            wall_clock_secs: 100.0,
+            accumulated_secs: 250.0,
+        }];
+        let out = summary_to_csv(&rows);
+        assert_eq!(
+            out,
+            "window,turns,wall_clock_secs,accumulated_secs\nToday,3,100,250\n"
+        );
+    }
+
+    #[test]
+    fn test_turns_to_json_full_snapshot() {
+        let out = turns_to_json_full(&turn_fixture()).unwrap();
+        let expected = r#"[
+  {
+    "agent": "claude-code",
+    "agent_duration_secs": 30.0,
+    "cwd": "/proj/a",
+    "effective_duration_secs": 630.0,
+    "ended_at": "2024-06-01T10:05:00Z",
+    "id": 7,
+    "model": "sonnet",
+    "project_name": "a",
+    "project_path": "/proj/a",
+    "session_id": "s7",
+    "started_at": "2024-06-01T10:00:00Z"
+  }
+]"#;
+        assert_eq!(out, expected);
+    }
 }
