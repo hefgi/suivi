@@ -12,6 +12,10 @@ impl Agent for ClaudeCodeAgent {
         "Claude Code"
     }
 
+    fn is_installed(&self) -> bool {
+        crate::agents::home_dir_exists(".claude") || crate::agents::binary_on_path("claude")
+    }
+
     fn detect(&self, env: &Env) -> bool {
         // Claude Code sets `CLAUDECODE=1` and `CLAUDE_CODE_*` in the environment of
         // every spawned hook process. Parent process is the `claude` binary.

@@ -33,22 +33,17 @@ pub fn run() -> Result<()> {
         println!("  No agents registered.");
     } else {
         for agent in &all {
-            let templates = agent.hook_templates();
-            let health = check_hook_health(&templates);
-            let status_str = match health {
-                HookHealth::Ok => "Ok".green().to_string(),
-                HookHealth::Missing => "Missing".red().to_string(),
-                HookHealth::Outdated => "Outdated".yellow().to_string(),
-            };
-            if agent.id() == "pi" {
-                println!(
-                    "  {:<20} {}  (experimental)",
-                    agent.display_name(),
-                    status_str
-                );
+            let status_str = if !agent.is_installed() {
+                "not installed".dimmed().to_string()
             } else {
-                println!("  {:<20} {}", agent.display_name(), status_str);
-            }
+                let templates = agent.hook_templates();
+                match check_hook_health(&templates) {
+                    HookHealth::Ok => "Ok".green().to_string(),
+                    HookHealth::Missing => "Missing".red().to_string(),
+                    HookHealth::Outdated => "Outdated".yellow().to_string(),
+                }
+            };
+            println!("  {:<20} {}", agent.display_name(), status_str);
         }
     }
 
