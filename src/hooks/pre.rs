@@ -3,14 +3,14 @@ use chrono::Utc;
 use std::io::Read;
 use tracing::{debug, info, instrument, warn};
 
-pub fn handle_pre() {
-    if let Err(e) = run() {
+pub fn handle_pre(agent_flag: Option<&str>) {
+    if let Err(e) = run(agent_flag) {
         warn!(error = %e, "hook pre failed");
     }
 }
 
 #[instrument(skip_all, name = "hook_pre")]
-fn run() -> Result<(), anyhow::Error> {
+fn run(agent_flag: Option<&str>) -> Result<(), anyhow::Error> {
     let mut stdin = String::new();
     std::io::stdin().read_to_string(&mut stdin)?;
     let stdin = stdin.trim().to_string();
@@ -20,25 +20,9 @@ fn run() -> Result<(), anyhow::Error> {
     }
     debug!(stdin_len = stdin.len(), stdin = %stdin, "received payload");
 
-    let env = agents::Env::capture();
-    debug!(
-        parent_process = ?env.parent_process_name,
-        agent_env_vars = ?env
-            .vars
-            .keys()
-            .filter(|k| {
-                let u = k.to_ascii_uppercase();
-                u.starts_with("CLAUDE") || u.starts_with("CODEX")
-                    || u.starts_with("OPENCODE") || u.starts_with("PI_")
-            })
-            .collect::<Vec<_>>(),
-        "captured env"
-    );
-    let all = agents::all_agents();
-    let agent = all.iter().find(|a| a.detect(&env));
-    let agent = match agent {
+    let agent = match resolve_agent(agent_flag, &stdin) {
         Some(a) => {
-            debug!(agent_id = a.id(), "agent detected");
+            debug!(agent_id = a.id(), "agent resolved");
             a
         }
         None => {
@@ -181,6 +165,50 @@ fn apply_buffer_correction(
     }
 }
 
+/// Resolve the calling agent, by decreasing trust:
+/// 1. the `--agent` flag baked into the installed hook command,
+/// 2. the `agent` field inside the payload (sent by the Pi/OpenCode plugins),
+/// 3. environment / parent-process sniffing, for hooks installed before the
+///    flag existed.
+///
+/// The explicit sources matter: env sniffing misattributes turns when one
+/// agent is launched from inside another's session (inherited env vars), and
+/// drops them when the parent process name is a generic runtime like `node`.
+fn resolve_agent(agent_flag: Option<&str>, raw_payload: &str) -> Option<Box<dyn agents::Agent>> {
+    if let Some(id) = agent_flag {
+        match agents::find_by_id(id) {
+            Some(a) => return Some(a),
+            None => warn!(agent_id = id, "--agent value matches no known agent"),
+        }
+    }
+
+    let payload_agent = serde_json::from_str::<serde_json::Value>(raw_payload)
+        .ok()
+        .and_then(|v| v.get("agent").and_then(|a| a.as_str().map(String::from)));
+    if let Some(id) = payload_agent {
+        match agents::find_by_id(&id) {
+            Some(a) => return Some(a),
+            None => warn!(agent_id = %id, "payload agent field matches no known agent"),
+        }
+    }
+
+    let env = agents::Env::capture();
+    debug!(
+        parent_process = ?env.parent_process_name,
+        agent_env_vars = ?env
+            .vars
+            .keys()
+            .filter(|k| {
+                let u = k.to_ascii_uppercase();
+                u.starts_with("CLAUDE") || u.starts_with("CODEX")
+                    || u.starts_with("OPENCODE") || u.starts_with("PI_")
+            })
+            .collect::<Vec<_>>(),
+        "falling back to env detection"
+    );
+    agents::all_agents().into_iter().find(|a| a.detect(&env))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +310,38 @@ mod tests {
         apply_buffer_correction(&conn, "sess", utc("2024-01-01T10:21:00Z"), 300.0);
         let rows = db::query_turns(&conn, None, None, None).unwrap();
         assert_eq!(rows[0].effective_duration_secs, Some(660.0));
+    }
+
+    #[test]
+    fn test_resolve_agent_flag_wins() {
+        // Payload says opencode, flag says pi — the installed command is the
+        // most explicit source and must win.
+        let payload = r#"{"session_id":"s","cwd":"/tmp","agent":"opencode"}"#;
+        let agent = resolve_agent(Some("pi"), payload).unwrap();
+        assert_eq!(agent.id(), "pi");
+    }
+
+    #[test]
+    fn test_resolve_agent_payload_field_beats_env() {
+        // Even when agent env vars are present in the test process (e.g. the
+        // suite runs inside a Claude Code session), the payload field wins.
+        let payload = r#"{"session_id":"s","cwd":"/tmp","agent":"opencode"}"#;
+        let agent = resolve_agent(None, payload).unwrap();
+        assert_eq!(agent.id(), "opencode");
+    }
+
+    #[test]
+    fn test_resolve_agent_unknown_flag_falls_back_to_payload() {
+        let payload = r#"{"session_id":"s","cwd":"/tmp","agent":"codex"}"#;
+        let agent = resolve_agent(Some("not-an-agent"), payload).unwrap();
+        assert_eq!(agent.id(), "codex");
+    }
+
+    #[test]
+    fn test_resolve_agent_unknown_everywhere_uses_env_detection() {
+        // No flag, no payload field — result depends on the test environment,
+        // so only assert it doesn't panic.
+        let payload = r#"{"session_id":"s","cwd":"/tmp"}"#;
+        let _ = resolve_agent(None, payload);
     }
 }

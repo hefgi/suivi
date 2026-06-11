@@ -112,6 +112,11 @@ pub fn all_agents() -> Vec<Box<dyn Agent>> {
     ]
 }
 
+/// Look up an agent by its stable id (e.g. "claude-code").
+pub fn find_by_id(id: &str) -> Option<Box<dyn Agent>> {
+    all_agents().into_iter().find(|a| a.id() == id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +151,18 @@ mod tests {
         for agent in all_agents() {
             let _ = agent.is_installed();
         }
+    }
+
+    #[test]
+    fn test_find_by_id() {
+        assert_eq!(
+            find_by_id("claude-code").map(|a| a.id()),
+            Some("claude-code")
+        );
+        assert_eq!(find_by_id("codex").map(|a| a.id()), Some("codex"));
+        assert_eq!(find_by_id("opencode").map(|a| a.id()), Some("opencode"));
+        assert_eq!(find_by_id("pi").map(|a| a.id()), Some("pi"));
+        assert!(find_by_id("unknown-agent").is_none());
+        assert!(find_by_id("Claude Code").is_none()); // display names don't resolve
     }
 }

@@ -36,9 +36,17 @@ pub struct HookArgs {
 #[derive(Subcommand)]
 pub enum HookEvent {
     /// Record turn start
-    Pre,
+    Pre(HookEventArgs),
     /// Record turn end
-    Stop,
+    Stop(HookEventArgs),
+}
+
+#[derive(Args)]
+pub struct HookEventArgs {
+    /// Agent identity (e.g. "claude-code"), set by the installed hook command.
+    /// Falls back to payload/environment detection when absent.
+    #[arg(long)]
+    pub agent: Option<String>,
 }
 
 #[derive(Args)]
