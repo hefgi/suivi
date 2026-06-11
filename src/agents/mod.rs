@@ -78,6 +78,27 @@ pub trait Agent: Send + Sync {
     fn detect(&self, env: &Env) -> bool;
     fn parse_payload(&self, raw: &str) -> Option<AgentPayload>;
     fn hook_templates(&self) -> HookTemplates;
+    /// Whether this agent appears to be installed on this machine.
+    /// `suivi init` only installs hooks for installed agents.
+    fn is_installed(&self) -> bool;
+}
+
+/// True if the user's home directory contains `rel` as a directory
+/// (e.g. ".claude" — agents create their config dir on first run).
+pub fn home_dir_exists(rel: &str) -> bool {
+    dirs::home_dir()
+        .map(|h| h.join(rel).is_dir())
+        .unwrap_or(false)
+}
+
+/// True if `bin` exists as a file in any entry of the PATH environment variable.
+pub fn binary_on_path(bin: &str) -> bool {
+    binary_in_path_var(bin, std::env::var_os("PATH").as_deref())
+}
+
+fn binary_in_path_var(bin: &str, path: Option<&std::ffi::OsStr>) -> bool {
+    let Some(path) = path else { return false };
+    std::env::split_paths(path).any(|dir| dir.join(bin).is_file())
 }
 
 /// Returns all supported agents in detection priority order.
@@ -106,5 +127,24 @@ mod tests {
     fn test_detect_parent_no_panic() {
         // Just verify it doesn't panic regardless of PPID availability
         let _ = Env::detect_parent();
+    }
+
+    #[test]
+    fn test_binary_in_path_var() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("some-agent"), "").unwrap();
+        let path_var = std::env::join_paths([dir.path()]).unwrap();
+
+        assert!(binary_in_path_var("some-agent", Some(&path_var)));
+        assert!(!binary_in_path_var("absent-agent", Some(&path_var)));
+        assert!(!binary_in_path_var("some-agent", None));
+    }
+
+    #[test]
+    fn test_is_installed_no_panic() {
+        // Result depends on the machine; just exercise every implementation.
+        for agent in all_agents() {
+            let _ = agent.is_installed();
+        }
     }
 }
