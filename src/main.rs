@@ -38,53 +38,48 @@ fn main() {
     }
 }
 
-/// Start-of-today UTC as RFC3339.
+/// Start of today's local day as UTC RFC3339.
 fn today_start_rfc3339() -> Option<String> {
-    chrono::Utc::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .map(|naive| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc))
-        .map(|d| d.to_rfc3339())
+    analytics::local_today_start_rfc3339()
 }
 
 /// Resolve --today/--week/--month/--since/--all into an optional RFC3339 lower bound.
-/// Returns None for --all (no lower bound). Returns None for the default case too —
+/// Returns Ok(None) for --all (no lower bound) and for the default case —
 /// the default stats view manages its own time windows internally.
-fn resolve_since(args: &cli::StatsArgs) -> Option<String> {
+/// An unparseable --since date is an error, not a silent no-op.
+fn resolve_since(args: &cli::StatsArgs) -> Result<Option<String>, anyhow::Error> {
     let now = chrono::Utc::now();
     if args.all {
-        return None;
+        return Ok(None);
     }
     if let Some(date_str) = &args.since {
-        // Parse YYYY-MM-DD
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-            let dt = date.and_hms_opt(0, 0, 0).map(|naive| {
-                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(naive, chrono::Utc)
-            });
-            return dt.map(|d| d.to_rfc3339());
-        }
+        let date = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").map_err(|_| {
+            anyhow::anyhow!("invalid --since date '{}' (expected YYYY-MM-DD)", date_str)
+        })?;
+        // Interpret the date in the user's timezone, like every other window.
+        return Ok(analytics::local_date_start_rfc3339(date));
     }
     if args.today {
-        return today_start_rfc3339();
+        return Ok(today_start_rfc3339());
     }
     if args.week {
-        return Some((now - chrono::Duration::days(7)).to_rfc3339());
+        return Ok(Some((now - chrono::Duration::days(7)).to_rfc3339()));
     }
     if args.month {
-        return Some((now - chrono::Duration::days(30)).to_rfc3339());
+        return Ok(Some((now - chrono::Duration::days(30)).to_rfc3339()));
     }
-    // No time flag — return None; callers that need a default window handle it themselves.
-    None
+    // No time flag — None; callers that need a default window handle it themselves.
+    Ok(None)
 }
 
 fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
+    let since = resolve_since(&args)?;
+
     // Auto-prune retention on every stats run (Gap #9)
     if let Ok(conn) = db::open() {
         let retention = config::load().unwrap_or_default().tracking.retention_days;
         let _ = db::delete_beyond_retention(&conn, retention);
     }
-
-    let since = resolve_since(&args);
     let has_time_flag = args.all || args.today || args.week || args.month || args.since.is_some();
 
     // --project scoped view (Gap #8): when --project is set with no other mode flag

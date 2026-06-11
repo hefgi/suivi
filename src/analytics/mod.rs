@@ -6,9 +6,50 @@ pub mod project_view;
 pub mod projects;
 pub mod stats;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 
 use crate::db::TurnRow;
+
+// ── Timezone handling ─────────────────────────────────────────────────────────
+//
+// Timestamps are stored as UTC RFC3339, but "a day" means a day in the user's
+// timezone: bucketing by the raw UTC date prefix shifts evening work onto the
+// wrong day for anyone west of UTC and after-midnight work for anyone east.
+
+/// YYYY-MM-DD of an RFC3339 timestamp, evaluated in `tz`.
+pub fn day_key_in<Tz: TimeZone>(rfc3339: &str, tz: &Tz) -> Option<String> {
+    let dt = DateTime::parse_from_rfc3339(rfc3339).ok()?;
+    Some(
+        dt.with_timezone(tz)
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string(),
+    )
+}
+
+/// YYYY-MM-DD of an RFC3339 timestamp in the local timezone.
+pub fn local_day_key(rfc3339: &str) -> Option<String> {
+    day_key_in(rfc3339, &chrono::Local)
+}
+
+/// Midnight of `date` in `tz`, returned as UTC RFC3339 (for query bounds).
+pub fn day_start_in<Tz: TimeZone>(date: NaiveDate, tz: &Tz) -> Option<String> {
+    let naive = date.and_hms_opt(0, 0, 0)?;
+    // A DST gap can make local midnight nonexistent; take the earliest
+    // valid instant of the day instead.
+    let local = tz.from_local_datetime(&naive).earliest()?;
+    Some(local.with_timezone(&Utc).to_rfc3339())
+}
+
+/// Start of today's *local* day as UTC RFC3339.
+pub fn local_today_start_rfc3339() -> Option<String> {
+    day_start_in(chrono::Local::now().date_naive(), &chrono::Local)
+}
+
+/// Local midnight of the given date as UTC RFC3339 (used by `--since`).
+pub fn local_date_start_rfc3339(date: NaiveDate) -> Option<String> {
+    day_start_in(date, &chrono::Local)
+}
 
 /// Merge overlapping intervals and return total duration in seconds.
 /// Input: list of (start, end) pairs as UTC DateTimes.
@@ -225,5 +266,50 @@ mod tests {
     #[test]
     fn test_format_duration_hours() {
         assert_eq!(format_duration(3690.0), "1h 02m");
+    }
+
+    #[test]
+    fn test_day_key_in_shifts_across_midnight() {
+        let paris = chrono::FixedOffset::east_opt(2 * 3600).unwrap(); // UTC+2
+                                                                      // 23:30 UTC is already the next day in Paris…
+        assert_eq!(
+            day_key_in("2026-06-10T23:30:00Z", &paris).as_deref(),
+            Some("2026-06-11")
+        );
+        // …but 21:30 UTC is still the same day.
+        assert_eq!(
+            day_key_in("2026-06-10T21:30:00Z", &paris).as_deref(),
+            Some("2026-06-10")
+        );
+        let la = chrono::FixedOffset::west_opt(8 * 3600).unwrap(); // UTC-8
+                                                                   // 02:00 UTC is the previous evening in Los Angeles.
+        assert_eq!(
+            day_key_in("2026-06-11T02:00:00Z", &la).as_deref(),
+            Some("2026-06-10")
+        );
+    }
+
+    #[test]
+    fn test_day_key_in_invalid_timestamp() {
+        let tz = chrono::FixedOffset::east_opt(0).unwrap();
+        assert!(day_key_in("not a timestamp", &tz).is_none());
+    }
+
+    #[test]
+    fn test_day_start_in_converts_to_utc() {
+        let paris = chrono::FixedOffset::east_opt(2 * 3600).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 6, 11).unwrap();
+        // Local midnight in UTC+2 is 22:00 UTC the previous day.
+        assert_eq!(
+            day_start_in(date, &paris).as_deref(),
+            Some("2026-06-10T22:00:00+00:00")
+        );
+    }
+
+    #[test]
+    fn test_local_helpers_no_panic() {
+        // Local-tz results depend on the host; just exercise the paths.
+        assert!(local_today_start_rfc3339().is_some());
+        let _ = local_day_key("2026-06-10T23:30:00Z");
     }
 }
