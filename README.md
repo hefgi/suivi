@@ -120,7 +120,7 @@ Both are always shown. Wall-clock tells you how your day was spent. Accumulated 
 | Claude Code | ✅ v1 | `UserPromptSubmit` + `Stop` |
 | Codex | ✅ v1 | `UserPromptSubmit` + `Stop` |
 | Pi | ✅ v1 | `before_agent_start` + `agent_end` |
-| OpenCode | ✅ v1 | `session.created` + `session.idle` (session-level) |
+| OpenCode | ✅ v1 | `message.updated` (user messages) + `session.idle` |
 
 ## Contributing
 

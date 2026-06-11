@@ -301,46 +301,18 @@ OpenCode uses a **JavaScript/TypeScript plugin system**. Plugins are registered 
 
 The plugin exports an async default function receiving a destructured context (`{ project, client, $, directory, worktree }`) and returns an object of named event handlers. We subscribe to the generic `event` handler and switch on `event.type`.
 
-```js
-// ~/.config/opencode/plugins/suivi.js
-import { execSync } from "child_process";
-import { writeFileSync, unlinkSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+A turn is **one user message → session idle**:
 
-const sessionIdFrom = (event) => {
-  const p = event?.properties;
-  return p?.info?.id ?? p?.sessionID ?? p?.session_id ?? p?.session?.id ?? null;
-};
+- `message.updated` with `properties.info.role === "user"` fires `suivi hook pre` (deduplicated per message id, since the event can fire more than once for the same message)
+- `session.idle` fires `suivi hook stop` via `properties.sessionID`
 
-const pipe = (cmd, payload, tag) => {
-  const tmp = join(tmpdir(), `suivi-${tag}-${Date.now()}.json`);
-  writeFileSync(tmp, payload);
-  try { execSync(`${cmd} < "${tmp}"`, { stdio: "ignore" }); }
-  finally { try { unlinkSync(tmp); } catch (_) {} }
-};
+Event payload shapes are verified against the OpenCode SDK type definitions (`packages/sdk/js/src/gen/types.gen.ts`): `message.updated` carries `properties.info` (a `UserMessage | AssistantMessage`, both with `sessionID` and `role`); `session.idle` carries `properties.sessionID`. Payloads are piped to suivi's stdin via a shell-less, non-blocking `spawn` — no temp files, and the agent's event loop is never blocked.
 
-export default async ({ directory, worktree } = {}) => ({
-  event: async ({ event }) => {
-    const sid = sessionIdFrom(event);
-    if (!sid) return;
-    if (event.type === "session.created") {
-      pipe("suivi hook pre", JSON.stringify({
-        session_id: sid,
-        cwd: directory ?? worktree ?? process.cwd(),
-        agent: "opencode",
-        model: event?.properties?.info?.model ?? null,
-      }), `pre-${sid}`);
-    } else if (event.type === "session.idle") {
-      pipe("suivi hook stop", JSON.stringify({ session_id: sid }), `stop-${sid}`);
-    }
-  },
-});
-```
+See `src/agents/opencode/hooks/suivi.js` for the installed plugin source.
 
 `suivi init` installs this file automatically when OpenCode is detected.
 
-**Note**: OpenCode has no `UserPromptSubmit` equivalent. The closest events are `session.created` and `session.idle`. Turn granularity for OpenCode is coarser — tracked per session-idle cycle, not per individual prompt. This is a known limitation tracked in Open Questions. The exact JSON path to the session id inside an event payload is not pinned in OpenCode's public docs; suivi uses a defensive fallback chain (`event.properties.info.id` first) and silently drops turns when none resolves.
+**Note**: OpenCode has no `UserPromptSubmit` hook, but per-user-message events give equivalent per-turn granularity. OpenCode does not expose the model in these events, so `model` stays NULL for OpenCode turns.
 
 ### Hook Payloads
 
