@@ -65,8 +65,7 @@ pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str
 
     let mut by_day: BTreeMap<String, Vec<TurnRow>> = BTreeMap::new();
     for turn in &turns {
-        let date = turn.started_at.get(..10).unwrap_or("").to_string();
-        if !date.is_empty() {
+        if let Some(date) = super::local_day_key(&turn.started_at) {
             by_day.entry(date).or_default().push(turn.clone());
         }
     }
