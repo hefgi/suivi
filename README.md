@@ -108,14 +108,19 @@ path = "~/code/org/*"  # tracks each subdirectory individually
 
 Project names default to the directory name. Add `name = "..."` to override.
 
-## Wall-clock vs accumulated time
+## Wall-clock vs agent time
 
 suivi tracks two time metrics:
 
-- **Wall-clock** — real elapsed time the project occupied your day. Two parallel sessions for 1 min = 1 min.
-- **Accumulated** — total agent-hours invested. Two parallel sessions for 1 min = 2 min.
+- **Wall-clock** — attention time: the union of all turn intervals, padded by
+  `human_buffer_secs` on each side to budget for reading and writing prompts.
+  Two parallel sessions for 1 min = 1 min.
+- **Agent time** — machine effort: the sum of each turn's real duration
+  (prompt submitted → response finished). Two parallel sessions for
+  1 min = 2 min.
 
-Both are always shown. Wall-clock tells you how your day was spent. Accumulated tells you how much effort went in.
+Wall-clock tells you how much of your day a project occupied. Agent time
+tells you how much the agents actually worked.
 
 ## Supported agents
 

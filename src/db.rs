@@ -664,7 +664,7 @@ mod tests {
                 &conn,
                 id,
                 &TurnStop {
-                    ended_at: format!("{}", started),
+                    ended_at: started.to_string(),
                     agent_duration_secs: 1.0,
                     effective_duration_secs: 1.0,
                 },

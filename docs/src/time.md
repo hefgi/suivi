@@ -2,35 +2,57 @@
 
 ## Wall-clock time
 
-Real elapsed time a project occupied your day. Computed by merging all overlapping turn intervals across sessions, then summing the non-overlapping ranges.
+Attention time: each completed turn becomes an interval
+`[started − buffer, ended + buffer]`; overlapping intervals across all
+sessions are merged and the non-overlapping ranges summed.
 
 Five parallel 1-minute sessions = **1 minute** wall-clock.
 
-## Accumulated time
+## Agent time
 
-Total agent-hours invested. Sum of all individual turn effective durations across all sessions.
+Machine effort: the sum of each completed turn's real duration
+(prompt submitted → response finished).
 
-Five parallel 1-minute sessions = **5 minutes** accumulated.
+Five parallel 1-minute sessions = **5 minutes** of agent time — summing
+across parallel sessions is intentional, because it measures what the agents
+did rather than what you attended to.
 
 ## Effective duration
 
-Each turn is charged:
+Each turn also stores an *engaged-time* estimate (`effective_duration_secs`),
+combining gap-corrected human think time with agent time:
 
 ```
 if gap_to_next_turn < buffer × 2:
-    effective = gap + agent_thinking_time
+    effective = gap + agent_duration
 else:
-    effective = buffer + agent_thinking_time + buffer
+    effective = buffer + agent_duration + buffer
 ```
 
-The default buffer is **5 minutes** each side — time budgeted for writing the prompt and reading the response. If you re-prompt within 10 minutes (2 × buffer), the actual gap is used instead of double-counting the buffer.
+The default buffer is **5 minutes** each side — time budgeted for writing the
+prompt and reading the response. If you re-prompt within 10 minutes
+(2 × buffer), the actual gap is used instead.
+
+Effective duration is not currently shown in the headline views (wall-clock
+and agent time are), but it is stored and included in JSON/CSV exports.
 
 Configure the buffer in `~/.config/suivi/config.toml`:
 
 ```toml
-buffer_mins = 5   # default: 5 minutes each side
+[tracking]
+human_buffer_secs = 300   # default: 5 minutes each side
 ```
+
+## Interrupted turns
+
+If an agent run never produces a Stop event (you interrupted it, or it
+crashed), the next prompt in the same session closes the turn at that
+moment, charging the elapsed time.
 
 ## Implementation detail
 
-`suivi hook stop` writes the best-guess effective duration (`buffer + thinking + buffer`) immediately. When `suivi hook pre` fires for the next prompt in the same session, it looks up the previous turn and corrects its effective duration if the gap was shorter than `2 × buffer`. This keeps the correction accurate without needing a background process.
+`suivi hook stop` derives the agent duration from the turn's own timestamps
+(no agent sends a duration field) and writes the best-guess effective
+duration immediately. When `suivi hook pre` fires for the next prompt in the
+same session, it corrects the previous turn's effective duration if the gap
+was shorter than `2 × buffer`. No background process required.
