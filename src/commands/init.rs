@@ -162,32 +162,37 @@ fn merge_json_hook(dest: &Path, template_content: &str) -> Result<()> {
                 .cloned()
                 .unwrap_or_default();
 
-            // Check if suivi is already installed for this event
-            let already_installed = existing_hooks.iter().any(|h| {
-                let check_obj = |obj: &serde_json::Value| {
-                    obj.get("command")
-                        .and_then(|c| c.as_str())
-                        .map(|c| c.contains("suivi hook"))
-                        .unwrap_or(false)
-                };
-                check_obj(h)
-                    || h.get("hooks")
-                        .and_then(|hs| hs.as_array())
-                        .map(|hs| hs.iter().any(check_obj))
-                        .unwrap_or(false)
-            });
-
-            if !already_installed {
-                let mut merged = existing_hooks;
-                merged.extend(new_hooks);
-                existing["hooks"][event_name] = serde_json::Value::Array(merged);
-            }
+            // Upsert: drop any previously installed suivi entries (their
+            // command may be outdated, e.g. missing the --agent flag), keep
+            // everything else, then append the current template's entries.
+            let mut merged: Vec<serde_json::Value> = existing_hooks
+                .into_iter()
+                .filter(|h| !mentions_suivi_hook(h))
+                .collect();
+            merged.extend(new_hooks);
+            existing["hooks"][event_name] = serde_json::Value::Array(merged);
         }
     }
 
     let content = serde_json::to_string_pretty(&existing)?;
     write_atomic(dest, &content)?;
     Ok(())
+}
+
+/// True if a hook entry (flat, or a group with a nested `hooks` array)
+/// invokes `suivi hook`.
+fn mentions_suivi_hook(h: &serde_json::Value) -> bool {
+    let check_obj = |obj: &serde_json::Value| {
+        obj.get("command")
+            .and_then(|c| c.as_str())
+            .map(|c| c.contains("suivi hook"))
+            .unwrap_or(false)
+    };
+    check_obj(h)
+        || h.get("hooks")
+            .and_then(|hs| hs.as_array())
+            .map(|hs| hs.iter().any(check_obj))
+            .unwrap_or(false)
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<()> {
@@ -262,6 +267,24 @@ mod tests {
         // Count occurrences — should appear exactly once
         let count = content.matches("suivi hook pre").count();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_merge_json_hook_upgrades_outdated_command() {
+        // An install predating the --agent flag must be replaced, not kept.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("settings.json");
+        let existing = r#"{"hooks": {"UserPromptSubmit": [
+            {"hooks": [{"type": "command", "command": "suivi hook pre"}]},
+            {"hooks": [{"type": "command", "command": "other-tool --flag"}]}
+        ]}}"#;
+        std::fs::write(&path, existing).unwrap();
+        let template = r#"{"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "suivi hook pre --agent claude-code"}]}]}}"#;
+        merge_json_hook(&path, template).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("suivi hook pre --agent claude-code"));
+        assert!(content.contains("other-tool --flag")); // foreign hooks preserved
+        assert_eq!(content.matches("suivi hook pre").count(), 1);
     }
 
     #[test]

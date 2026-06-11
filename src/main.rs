@@ -19,8 +19,10 @@ fn main() {
     let result: Result<(), String> = match cli.command {
         Command::Hook(args) => {
             match args.event {
-                HookEvent::Pre => hooks::pre::handle_pre(),
-                HookEvent::Stop => hooks::stop::handle_stop(),
+                HookEvent::Pre(a) => hooks::pre::handle_pre(a.agent.as_deref()),
+                // Stop resolves the turn via session_id alone; the flag is
+                // accepted for symmetry with the installed pre command.
+                HookEvent::Stop(_) => hooks::stop::handle_stop(),
             }
             Ok(())
         }

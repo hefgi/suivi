@@ -46,13 +46,13 @@ export default function (pi) {
       cwd: ctx?.cwd ?? process.cwd(),
       agent: "pi",
     });
-    pipe("suivi hook pre", payload, `pre-${sid}`);
+    pipe("suivi hook pre --agent pi", payload, `pre-${sid}`);
   });
 
   pi.on("agent_end", async (_event, ctx) => {
     const sid = sessionIdFrom(ctx);
     if (!sid) return;
     const payload = JSON.stringify({ session_id: sid });
-    pipe("suivi hook stop", payload, `stop-${sid}`);
+    pipe("suivi hook stop --agent pi", payload, `stop-${sid}`);
   });
 }

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "suivi hook stop"
+            "command": "suivi hook stop --agent claude-code"
           }
         ]
       }

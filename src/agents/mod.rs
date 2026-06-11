@@ -91,6 +91,11 @@ pub fn all_agents() -> Vec<Box<dyn Agent>> {
     ]
 }
 
+/// Look up an agent by its stable id (e.g. "claude-code").
+pub fn find_by_id(id: &str) -> Option<Box<dyn Agent>> {
+    all_agents().into_iter().find(|a| a.id() == id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +111,18 @@ mod tests {
     fn test_detect_parent_no_panic() {
         // Just verify it doesn't panic regardless of PPID availability
         let _ = Env::detect_parent();
+    }
+
+    #[test]
+    fn test_find_by_id() {
+        assert_eq!(
+            find_by_id("claude-code").map(|a| a.id()),
+            Some("claude-code")
+        );
+        assert_eq!(find_by_id("codex").map(|a| a.id()), Some("codex"));
+        assert_eq!(find_by_id("opencode").map(|a| a.id()), Some("opencode"));
+        assert_eq!(find_by_id("pi").map(|a| a.id()), Some("pi"));
+        assert!(find_by_id("unknown-agent").is_none());
+        assert!(find_by_id("Claude Code").is_none()); // display names don't resolve
     }
 }

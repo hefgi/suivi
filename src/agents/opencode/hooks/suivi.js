@@ -58,10 +58,10 @@ export default async ({ directory, worktree } = {}) => ({
         agent: "opencode",
         model: modelFrom(event),
       });
-      pipe("suivi hook pre", payload, `pre-${sid}`);
+      pipe("suivi hook pre --agent opencode", payload, `pre-${sid}`);
     } else if (event.type === "session.idle") {
       const payload = JSON.stringify({ session_id: sid });
-      pipe("suivi hook stop", payload, `stop-${sid}`);
+      pipe("suivi hook stop --agent opencode", payload, `stop-${sid}`);
     }
   },
 });
