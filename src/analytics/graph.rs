@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 use crate::config;
 use crate::db::{self, TurnRow};
 
-use super::{accumulated_secs, format_duration, wall_clock_secs};
+use super::{agent_secs, format_duration, wall_clock_secs};
 
 const BAR_WIDTH: usize = 20;
 
 /// Pure renderer for the daily activity graph.
-/// `days` is a sorted-ascending list of (YYYY-MM-DD, wall_clock_secs, accumulated_secs).
+/// `days` is a sorted-ascending list of (YYYY-MM-DD, wall_clock_secs, agent_secs).
 pub fn render(days: &[(String, f64, f64)]) -> String {
     let mut out = String::new();
     if days.is_empty() {
@@ -36,7 +36,7 @@ pub fn render(days: &[(String, f64, f64)]) -> String {
         "█".repeat(filled) + &"░".repeat(BAR_WIDTH - filled)
     };
 
-    for (date, wall, accum) in days {
+    for (date, wall, agent) in days {
         let label = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
             .map(|d| d.format("%b %d").to_string())
             .unwrap_or_else(|_| date.clone());
@@ -48,9 +48,9 @@ pub fn render(days: &[(String, f64, f64)]) -> String {
             format_duration(*wall),
         ));
         out.push_str(&format!(
-            "          accumulated {}  {}\n",
-            bar(*accum).green(),
-            format_duration(*accum),
+            "          agent time  {}  {}\n",
+            bar(*agent).green(),
+            format_duration(*agent),
         ));
     }
 
@@ -74,8 +74,8 @@ pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str
         .into_iter()
         .map(|(date, day_turns)| {
             let wall = wall_clock_secs(&day_turns, buffer);
-            let accum = accumulated_secs(&day_turns);
-            (date, wall, accum)
+            let agent = agent_secs(&day_turns);
+            (date, wall, agent)
         })
         .collect();
 
@@ -121,7 +121,7 @@ mod tests {
 
         assert!(plain.contains("Daily activity — last 30 days"));
         assert!(plain.contains("Jun 01  wall-clock"));
-        assert!(plain.contains("          accumulated"));
+        assert!(plain.contains("          agent time"));
         assert!(plain.contains("Jun 02  wall-clock"));
         assert!(plain.contains("4h 00m"));
         assert!(plain.contains("6h 00m"));
@@ -137,7 +137,7 @@ mod tests {
         // The largest value across all days/series should fill the bar.
         let days = vec![("2024-06-01".to_string(), 1.0 * 3600.0, 10.0 * 3600.0)];
         let out = render(&days);
-        // accumulated has max value → its bar should be all full blocks.
+        // agent time has max value → its bar should be all full blocks.
         let full = "█".repeat(BAR_WIDTH);
         assert!(out.contains(&full));
     }

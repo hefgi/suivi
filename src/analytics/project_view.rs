@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::{config, db};
 
-use super::{accumulated_secs, format_duration, merge_intervals, wall_clock_secs};
+use super::{agent_secs, format_duration, merge_intervals, wall_clock_secs};
 
 pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
@@ -36,12 +36,12 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
         let turns = db::query_turns(&conn, win_since.as_deref(), matched_path.as_deref(), None)?;
         let turns = filter_by_name(&turns, project_name, matched_path.as_deref());
         let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
-        let accum = accumulated_secs(&turns);
+        let agent = agent_secs(&turns);
         println!(
-            "  {:<12} wall-clock {:>8}   accumulated {:>8}",
+            "  {:<12} wall-clock {:>8}   agent time {:>8}",
             label.bold(),
             format_duration(wall),
-            format_duration(accum)
+            format_duration(agent)
         );
     }
     println!();
@@ -65,7 +65,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
         if t.ended_at.is_none() {
             continue;
         }
-        *by_agent.entry(t.agent.clone()).or_default() += t.effective_duration_secs.unwrap_or(0.0);
+        *by_agent.entry(t.agent.clone()).or_default() += t.agent_duration_secs.unwrap_or(0.0);
     }
 
     if !by_agent.is_empty() {
@@ -106,7 +106,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
             continue;
         }
         let model = t.model.clone().unwrap_or_else(|| "(unknown)".to_string());
-        *by_model.entry(model).or_default() += t.effective_duration_secs.unwrap_or(0.0);
+        *by_model.entry(model).or_default() += t.agent_duration_secs.unwrap_or(0.0);
     }
 
     if !by_model.is_empty() {
@@ -180,7 +180,7 @@ fn render_mini_graph(turns: &[crate::db::TurnRow], cfg: &config::Config) {
             idxs.iter()
                 .filter_map(|&i| {
                     if turns[i].ended_at.is_some() {
-                        turns[i].effective_duration_secs
+                        turns[i].agent_duration_secs
                     } else {
                         None
                     }
@@ -213,7 +213,7 @@ fn render_mini_graph(turns: &[crate::db::TurnRow], cfg: &config::Config) {
             .iter()
             .filter_map(|&i| {
                 if turns[i].ended_at.is_some() {
-                    turns[i].effective_duration_secs
+                    turns[i].agent_duration_secs
                 } else {
                     None
                 }
@@ -245,7 +245,7 @@ fn render_mini_graph(turns: &[crate::db::TurnRow], cfg: &config::Config) {
             format_duration(wall)
         );
         println!(
-            "  {}  accumulated {}  {}",
+            "  {}  agent time  {}  {}",
             " ".repeat(10),
             format!(
                 "{}{}",

@@ -29,7 +29,7 @@ pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str
         "{:<12}  {:>12}  {:>12}  {:>6}",
         "Date".bold(),
         "Wall-clock".bold(),
-        "Accumulated".bold(),
+        "Agent time".bold(),
         "Turns".bold()
     );
     println!("{}", "-".repeat(50));
@@ -59,7 +59,7 @@ pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str
             .filter_map(|&i| {
                 let t = &turns[i];
                 if t.ended_at.is_some() {
-                    t.effective_duration_secs
+                    t.agent_duration_secs
                 } else {
                     None
                 }

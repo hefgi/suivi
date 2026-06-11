@@ -35,7 +35,7 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
                 .filter_map(|&i| {
                     let t = &turns[i];
                     if t.ended_at.is_some() {
-                        t.effective_duration_secs
+                        t.agent_duration_secs
                     } else {
                         None
                     }
@@ -46,7 +46,7 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
                 .filter_map(|&i| {
                     let t = &turns[i];
                     if t.ended_at.is_some() {
-                        t.effective_duration_secs
+                        t.agent_duration_secs
                     } else {
                         None
                     }
@@ -66,7 +66,7 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
         "{:<nw$}  {:>tw$}  {:>tw$}  {:>5}  {}",
         "Project".bold(),
         "Wall-clock".bold(),
-        "Accumulated".bold(),
+        "Agent time".bold(),
         "Turns".bold(),
         "Sessions".bold(),
         nw = name_w,
@@ -103,7 +103,7 @@ pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
             .filter_map(|&i| {
                 let t = &turns[i];
                 if t.ended_at.is_some() {
-                    t.effective_duration_secs
+                    t.agent_duration_secs
                 } else {
                     None
                 }

@@ -7,14 +7,14 @@ use crate::cli::OutputFormat;
 use crate::db::TurnRow;
 use crate::{config, db};
 
-use super::{accumulated_secs, format_duration, sessions_column, wall_clock_secs};
+use super::{agent_secs, format_duration, sessions_column, wall_clock_secs};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StatsSummaryRow {
     pub window: String,
     pub turns: usize,
     pub wall_clock_secs: f64,
-    pub accumulated_secs: f64,
+    pub agent_secs: f64,
 }
 
 pub fn summary_to_json(rows: &[StatsSummaryRow]) -> Result<String> {
@@ -22,11 +22,11 @@ pub fn summary_to_json(rows: &[StatsSummaryRow]) -> Result<String> {
 }
 
 pub fn summary_to_csv(rows: &[StatsSummaryRow]) -> String {
-    let mut out = String::from("window,turns,wall_clock_secs,accumulated_secs\n");
+    let mut out = String::from("window,turns,wall_clock_secs,agent_secs\n");
     for r in rows {
         out.push_str(&format!(
             "{},{},{},{}\n",
-            r.window, r.turns, r.wall_clock_secs, r.accumulated_secs
+            r.window, r.turns, r.wall_clock_secs, r.agent_secs
         ));
     }
     out
@@ -44,12 +44,12 @@ fn collect_summary_rows(
         let turns = db::query_turns(conn, win_since.as_deref(), project, agent_filter)?;
         let turn_count = turns.iter().filter(|t| t.ended_at.is_some()).count();
         let wall = wall_clock_secs(&turns, buffer_secs);
-        let accum = accumulated_secs(&turns);
+        let agent = agent_secs(&turns);
         rows.push(StatsSummaryRow {
             window: label.to_string(),
             turns: turn_count,
             wall_clock_secs: wall,
-            accumulated_secs: accum,
+            agent_secs: agent,
         });
     }
     Ok(rows)
@@ -155,13 +155,13 @@ pub fn run(
                 let turns = db::query_turns(&conn, win_since.as_deref(), project, agent_filter)?;
                 let completed: Vec<_> = turns.iter().filter(|t| t.ended_at.is_some()).collect();
                 let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
-                let accum = accumulated_secs(&turns);
+                let agent = agent_secs(&turns);
 
                 println!(
-                    "  {:<12} wall-clock {:>8}   accumulated {:>8}",
+                    "  {:<12} wall-clock {:>8}   agent time {:>8}",
                     label.bold(),
                     format_duration(wall),
-                    format_duration(accum)
+                    format_duration(agent)
                 );
                 let _ = completed; // suppress unused warning
             }
@@ -200,11 +200,11 @@ pub fn run(
             projects.sort_by(|a, b| {
                 let a_acc: f64 =
                     a.1.iter()
-                        .filter_map(|&i| week_turns[i].effective_duration_secs)
+                        .filter_map(|&i| week_turns[i].agent_duration_secs)
                         .sum();
                 let b_acc: f64 =
                     b.1.iter()
-                        .filter_map(|&i| week_turns[i].effective_duration_secs)
+                        .filter_map(|&i| week_turns[i].agent_duration_secs)
                         .sum();
                 b_acc
                     .partial_cmp(&a_acc)
@@ -217,7 +217,7 @@ pub fn run(
                 "  {:<16}  {:>10}  {:>11}  {:>5}  {}",
                 "Project".bold(),
                 "Wall-clock".bold(),
-                "Accumulated".bold(),
+                "Agent time".bold(),
                 "Turns".bold(),
                 "Sessions".bold()
             );
@@ -245,7 +245,7 @@ pub fn run(
 
                 let accum: f64 = indices
                     .iter()
-                    .filter_map(|&i| week_turns[i].effective_duration_secs)
+                    .filter_map(|&i| week_turns[i].agent_duration_secs)
                     .sum();
 
                 let turn_count = indices.len();
@@ -275,7 +275,7 @@ pub fn run(
                     continue;
                 }
                 *by_agent.entry(turn.agent.clone()).or_default() +=
-                    turn.effective_duration_secs.unwrap_or(0.0);
+                    turn.agent_duration_secs.unwrap_or(0.0);
             }
 
             if by_agent.is_empty() {
@@ -340,13 +340,13 @@ mod tests {
                 window: "Today".to_string(),
                 turns: 3,
                 wall_clock_secs: 100.0,
-                accumulated_secs: 250.0,
+                agent_secs: 250.0,
             },
             StatsSummaryRow {
                 window: "All time".to_string(),
                 turns: 42,
                 wall_clock_secs: 9999.5,
-                accumulated_secs: 12345.5,
+                agent_secs: 12345.5,
             },
         ];
         let out = summary_to_json(&rows).unwrap();
@@ -355,13 +355,13 @@ mod tests {
     "window": "Today",
     "turns": 3,
     "wall_clock_secs": 100.0,
-    "accumulated_secs": 250.0
+    "agent_secs": 250.0
   },
   {
     "window": "All time",
     "turns": 42,
     "wall_clock_secs": 9999.5,
-    "accumulated_secs": 12345.5
+    "agent_secs": 12345.5
   }
 ]"#;
         assert_eq!(out, expected);
@@ -373,12 +373,12 @@ mod tests {
             window: "Today".to_string(),
             turns: 3,
             wall_clock_secs: 100.0,
-            accumulated_secs: 250.0,
+            agent_secs: 250.0,
         }];
         let out = summary_to_csv(&rows);
         assert_eq!(
             out,
-            "window,turns,wall_clock_secs,accumulated_secs\nToday,3,100,250\n"
+            "window,turns,wall_clock_secs,agent_secs\nToday,3,100,250\n"
         );
     }
 

@@ -95,13 +95,15 @@ pub fn wall_clock_secs(turns: &[TurnRow], buffer_secs: u32) -> f64 {
     merge_intervals(intervals)
 }
 
-/// Compute accumulated seconds for a set of turns.
-/// Sums effective_duration_secs for all completed turns.
-pub fn accumulated_secs(turns: &[TurnRow]) -> f64 {
+/// Compute agent seconds for a set of turns: machine effort, summed as each
+/// completed turn's real duration (`agent_duration_secs`, i.e. prompt
+/// submitted → response finished). Parallel sessions legitimately add up —
+/// five agents running one minute each is five agent-minutes.
+pub fn agent_secs(turns: &[TurnRow]) -> f64 {
     let total: f64 = turns
         .iter()
         .filter(|t| t.ended_at.is_some())
-        .filter_map(|t| t.effective_duration_secs)
+        .filter_map(|t| t.agent_duration_secs)
         .sum();
     total.max(0.0)
 }
@@ -233,8 +235,8 @@ mod tests {
     }
 
     #[test]
-    fn test_accumulated_sums_all_sessions() {
-        // Five parallel 1-minute sessions = 5 minutes accumulated
+    fn test_agent_secs_sums_all_sessions() {
+        // Five parallel 1-minute sessions = 5 minutes of agent time
         let turns: Vec<crate::db::TurnRow> = (0..5)
             .map(|i| crate::db::TurnRow {
                 id: i,
@@ -247,10 +249,11 @@ mod tests {
                 agent: "claude-code".to_string(),
                 model: None,
                 agent_duration_secs: Some(60.0),
-                effective_duration_secs: Some(60.0),
+                // effective carries buffers; agent_secs must ignore it
+                effective_duration_secs: Some(660.0),
             })
             .collect();
-        assert_eq!(accumulated_secs(&turns), 300.0); // 5 × 60
+        assert_eq!(agent_secs(&turns), 300.0); // 5 × 60
     }
 
     #[test]

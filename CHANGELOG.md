@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Output formats: `--format text|json|csv` for `suivi stats`
 - `CONTRIBUTING.md` at the repo root (the README already linked it) (#21)
 
+### Changed
+- The second headline metric is now **agent time** — the sum of each turn's
+  real duration — replacing "accumulated" effective time, which blended human
+  buffers into agent effort and double-counted attention across parallel
+  sessions (#10). Summary JSON/CSV rename `accumulated_secs` to `agent_secs`;
+  history exports gain an `agent_duration_secs` column. Per-turn
+  `effective_duration_secs` is still stored and exported.
+
 ### Fixed
 - Agent thinking time was always recorded as 0: `hook stop` read a `duration_ms`
   field that no agent sends; durations now fall back to `ended_at − started_at` (#16)

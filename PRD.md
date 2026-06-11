@@ -12,7 +12,7 @@ Developers running multiple AI agent sessions across multiple projects simultane
 - Captures per-turn agent activity and maps it to a project
 - Accounts for human think time (writing prompts, reading outputs)
 - Aggregates across heterogeneous agents (Claude Code, Codex, OpenCode, Pi)
-- Presents project-level and cross-project time analytics in both wall-clock and accumulated time
+- Presents project-level and cross-project time analytics in both wall-clock and agent time
 
 ---
 
@@ -21,7 +21,7 @@ Developers running multiple AI agent sessions across multiple projects simultane
 - Track time at the per-agent-turn granularity across all CLI-based AI agents
 - Attribute each turn to a tracked project via CWD → config path matching
 - Surface analytics: total time, by project, by agent, by model, by day
-- Show both wall-clock time (real elapsed) and accumulated time (agent-hours invested)
+- Show both wall-clock time (attention) and agent time (machine effort)
 - Provide a CLI experience on par with RTK's `gain` command
 - Zero friction: hook-based, no manual session management
 
@@ -55,13 +55,15 @@ A continuous sequence of turns sharing the same `session_id`, as provided by the
 
 Real elapsed time a project occupied the user's day. Computed by taking the union of all turn intervals (with buffers applied) across all sessions for a project, then summing the merged non-overlapping ranges. Five parallel 1-minute sessions = 1 minute of wall-clock time.
 
-### Accumulated Time
+### Agent Time
 
-Total agent-hours invested in a project. Sum of all individual turn effective durations across all sessions. Five parallel 1-minute sessions = 5 minutes of accumulated time. Reflects total cognitive effort regardless of parallelism.
+Machine effort invested in a project: the sum of each completed turn's real duration (`ended_at − started_at`) across all sessions. Five parallel 1-minute sessions = 5 minutes of agent time. Summing across parallel sessions is intentional — it measures what the agents did, not what the human attended to.
 
 ### Effective Duration
 
-The time charged per turn:
+Stored per turn (`effective_duration_secs`) as an *engaged-time* estimate: gap-corrected human think time plus agent time. It is not currently a headline metric — wall-clock and agent time are the displayed pair — but it is computed and retained for future views.
+
+The estimate per turn:
 
 ```
 Let B = human_buffer_secs (default 300)
@@ -357,19 +359,19 @@ Incomplete turns (no `Stop` fired, `ended_at` is NULL) older than 2 hours are ex
 
 ### `suivi stats`
 
-Summary view showing both wall-clock and accumulated time, top projects, top agents.
+Summary view showing both wall-clock and agent time time, top projects, top agents.
 
 ```
 suivi — Summary
 ─────────────────────────────────────────────────────
 
-  Today     wall-clock  2h 14m   accumulated  3h 41m
-  This week wall-clock 11h 03m   accumulated 18h 22m
-  All time  wall-clock 43h 22m   accumulated 71h 15m
+  Today     wall-clock  2h 14m   agent time  3h 41m
+  This week wall-clock 11h 03m   agent time 18h 22m
+  All time  wall-clock 43h 22m   agent time 71h 15m
 
   Top projects (this week)
   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Project        Wall-clock  Accumulated  Turns  Sessions
+  Project        Wall-clock  Agent time  Turns  Sessions
   accounting       4h 12m      6h 45m      312   claude-code ×2  pi ×3  │ 12 total
   tracker-code     3h 01m      3h 01m      198   claude-code ×1          │  4 total
   Enzyme           2h 19m      2h 19m      143   codex ×1                │  3 total
@@ -383,19 +385,19 @@ suivi — Summary
 
 ### `suivi stats --graph`
 
-ASCII bar graph showing both wall-clock and accumulated time per day, last 30 days. Two lines per day so parallelism is visually apparent.
+ASCII bar graph showing both wall-clock and agent time time per day, last 30 days. Two lines per day so parallelism is visually apparent.
 
 ```
 Daily activity — last 30 days
 Jun 01  wall-clock  ████████████░░░░░░░░  4h 12m
-        accumulated ██████████████████░░  6h 45m
+        agent time ██████████████████░░  6h 45m
 Jun 02  wall-clock  ██████░░░░░░░░░░░░░░  2h 01m
-        accumulated ██████░░░░░░░░░░░░░░  2h 01m
+        agent time ██████░░░░░░░░░░░░░░  2h 01m
 ```
 
 ### `suivi stats --daily`
 
-Day-by-day breakdown table: date, wall-clock, accumulated, turns, top project, top agent.
+Day-by-day breakdown table: date, wall-clock, agent time, turns, top project, top agent.
 
 ### `suivi stats --history`
 
@@ -410,7 +412,7 @@ The Sessions column shows the number of distinct sessions per agent over the win
 ```
 suivi — Project comparison
 ──────────────────────────────────────────────────────────────────────────────────────────
-Project        Wall-clock  Accumulated   Turns  Sessions
+Project        Wall-clock  Agent time   Turns  Sessions
 ──────────────────────────────────────────────────────────────────────────────────────────
 accounting       4h 12m      6h 45m       312   claude-code ×2  pi ×3  │ 12 total
 tracker-code     3h 01m      3h 01m       198   claude-code ×1          │  4 total
@@ -423,7 +425,7 @@ Total           11h 03m     18h 22m       776
 
 ### `suivi stats --project <name>`
 
-Scoped view for one project: wall-clock vs accumulated graph, agent time split, model breakdown, recent history.
+Scoped view for one project: wall-clock vs agent time graph, agent time split, model breakdown, recent history.
 
 ### `suivi stats --agent <name>`
 
@@ -550,7 +552,7 @@ Source lives in `docs/src/`. Pages:
 - Configuration
 - Commands
 - Agents (supported agents + contributor guide)
-- How time is measured (wall-clock vs accumulated, buffer cap)
+- How time is measured (wall-clock vs agent time, buffer cap)
 - Contributing
 
 Includes `llms.txt` and `llms-full.txt` generated at build time for LLM-friendly consumption of the docs.
@@ -580,7 +582,7 @@ Every pure logic module has unit tests covering the happy path and edge cases:
 - **Buffer cap logic** — verify `effective_duration` for: gap < B*2, gap > B*2, no next turn, zero-length gap
 - **Project matching** — nearest-ancestor matching with overlapping paths, glob expansion, unmatched CWDs
 - **Wall-clock interval merging** — overlapping turns, adjacent turns, single turn, empty set
-- **Accumulated time** — sum across multiple sessions including concurrent ones
+- **Agent time time** — sum across multiple sessions including concurrent ones
 - **Config parsing** — valid TOML, missing fields defaulting correctly, invalid paths
 - **Agent payload parsing** — valid payload, missing `session_id` returns `None`, unknown fields ignored
 
@@ -595,7 +597,7 @@ Test the full `hook pre` → `hook stop` → analytics pipeline against a real S
 
 - Single session: one turn, correct effective duration
 - Single session: two back-to-back turns, buffer cap correction applied
-- Two concurrent sessions on the same project: wall-clock deduplication correct, accumulated double-counts correctly
+- Two concurrent sessions on the same project: wall-clock deduplication correct, agent time double-counts correctly
 - Two sessions on different projects: no cross-contamination
 - Turn with no `Stop` fired: excluded from analytics after 2-hour stale threshold
 - Untracked CWD: stored with `project_path = NULL`, surfaced in `suivi status`
@@ -620,7 +622,7 @@ This guards against payload format changes breaking agent support silently.
 
 - [ ] `suivi init` on a clean machine creates config and registers hooks for all detected agents
 - [ ] `suivi init` re-run on existing config prints skip message and re-syncs hooks only
-- [ ] Open two Claude Code sessions in the same project simultaneously — verify wall-clock < accumulated in `suivi stats`
+- [ ] Open two Claude Code sessions in the same project simultaneously — verify wall-clock < agent time in `suivi stats`
 - [ ] Open Claude Code in an untracked directory — verify it appears in `suivi status` untracked section
 - [ ] Run `suivi stats --all --format json` and validate JSON structure
 - [ ] Verify `suivi hook pre` is a no-op (silent exit 0) when called outside an agent session

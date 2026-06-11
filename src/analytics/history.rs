@@ -17,6 +17,7 @@ pub fn turns_to_json(turns: &[TurnRow]) -> Result<String> {
                 "model": t.model,
                 "project_name": t.project_name,
                 "project_path": t.project_path,
+                "agent_duration_secs": t.agent_duration_secs,
                 "effective_duration_secs": t.effective_duration_secs,
                 "session_id": t.session_id,
             })
@@ -28,16 +29,19 @@ pub fn turns_to_json(turns: &[TurnRow]) -> Result<String> {
 pub fn turns_to_csv(turns: &[TurnRow]) -> String {
     let mut out = String::new();
     out.push_str(
-        "started_at,ended_at,agent,model,project_name,effective_duration_secs,session_id\n",
+        "started_at,ended_at,agent,model,project_name,agent_duration_secs,effective_duration_secs,session_id\n",
     );
     for t in turns {
         out.push_str(&format!(
-            "{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{}\n",
             t.started_at,
             t.ended_at.as_deref().unwrap_or(""),
             t.agent,
             t.model.as_deref().unwrap_or(""),
             t.project_name.as_deref().unwrap_or(""),
+            t.agent_duration_secs
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
             t.effective_duration_secs
                 .map(|s| s.to_string())
                 .unwrap_or_default(),
@@ -83,7 +87,7 @@ pub fn run(
                     .unwrap_or_else(|_| turn.started_at.clone());
 
                 let duration = turn
-                    .effective_duration_secs
+                    .agent_duration_secs
                     .map(format_duration)
                     .unwrap_or_else(|| "(open)".to_string());
 
@@ -155,6 +159,7 @@ mod tests {
         let expected = r#"[
   {
     "agent": "claude-code",
+    "agent_duration_secs": 30.0,
     "effective_duration_secs": 630.0,
     "ended_at": "2024-06-01T10:05:00Z",
     "model": "sonnet",
@@ -165,6 +170,7 @@ mod tests {
   },
   {
     "agent": "codex",
+    "agent_duration_secs": null,
     "effective_duration_secs": null,
     "ended_at": null,
     "model": null,
@@ -181,9 +187,9 @@ mod tests {
     fn test_turns_to_csv_snapshot() {
         let out = turns_to_csv(&fixture());
         let expected =
-            "started_at,ended_at,agent,model,project_name,effective_duration_secs,session_id\n\
-2024-06-01T10:00:00Z,2024-06-01T10:05:00Z,claude-code,sonnet,a,630,s1\n\
-2024-06-01T11:00:00Z,,codex,,,,s2\n";
+            "started_at,ended_at,agent,model,project_name,agent_duration_secs,effective_duration_secs,session_id\n\
+2024-06-01T10:00:00Z,2024-06-01T10:05:00Z,claude-code,sonnet,a,30,630,s1\n\
+2024-06-01T11:00:00Z,,codex,,,,,s2\n";
         assert_eq!(out, expected);
     }
 
@@ -192,7 +198,7 @@ mod tests {
         let out = turns_to_csv(&[]);
         assert_eq!(
             out,
-            "started_at,ended_at,agent,model,project_name,effective_duration_secs,session_id\n"
+            "started_at,ended_at,agent,model,project_name,agent_duration_secs,effective_duration_secs,session_id\n"
         );
     }
 }
