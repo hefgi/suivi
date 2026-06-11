@@ -153,7 +153,6 @@ pub fn run(
 
             for (label, win_since) in &windows {
                 let turns = db::query_turns(&conn, win_since.as_deref(), project, agent_filter)?;
-                let completed: Vec<_> = turns.iter().filter(|t| t.ended_at.is_some()).collect();
                 let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
                 let agent = agent_secs(&turns);
 
@@ -163,7 +162,6 @@ pub fn run(
                     format_duration(wall),
                     format_duration(agent)
                 );
-                let _ = completed; // suppress unused warning
             }
             println!();
 

@@ -208,7 +208,9 @@ pub fn expand_globs(path: &str) -> Vec<PathBuf> {
     if has_glob_chars(&expanded) {
         match glob::glob(&expanded) {
             Ok(paths) => {
-                for p in paths.flatten() {
+                // Projects are directories; a stray file matching the glob
+                // (e.g. org/README.md for org/*) must not become a project.
+                for p in paths.flatten().filter(|p| p.is_dir()) {
                     results.push(p);
                 }
             }
@@ -406,6 +408,16 @@ paths = ["/a", "/b", "/c"]
         if let Some(home) = dirs::home_dir() {
             assert!(expanded.iter().any(|p| p == &home));
         }
+    }
+
+    #[test]
+    fn test_expand_globs_skips_files() {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir(dir.path().join("real-project")).unwrap();
+        std::fs::write(dir.path().join("stray-file.md"), "x").unwrap();
+        let pattern = format!("{}/*", dir.path().display());
+        let expanded = expand_globs(&pattern);
+        assert_eq!(expanded, vec![dir.path().join("real-project")]);
     }
 
     #[test]

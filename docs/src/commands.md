@@ -70,7 +70,7 @@ suivi stats --all --format json  # full JSON export
 ```
 Projects
 
-Project                     Wall-clock   Accumulated  Sessions
+Project                     Wall-clock   Agent time   Sessions
 --------------------------------------------------------------------
 tracker-code                     1h 12m       2h 05m  ×4
 my-app                             45m          58m   ×1
@@ -94,7 +94,7 @@ Activity graph
 ```
 Daily breakdown
 
-Date          Wall-clock   Accumulated   Turns
+Date          Wall-clock   Agent time    Turns
 --------------------------------------------------
 2026-05-28         42m           58m       8
 2026-05-29       1h 12m        2h 05m     14
@@ -123,7 +123,7 @@ suivi stats --all --format json
     "window": "All time",
     "turns": 42,
     "wall_clock_secs": 7320.0,
-    "accumulated_secs": 14400.0
+    "agent_secs": 14400.0
   }
 ]
 ```
@@ -135,7 +135,7 @@ suivi stats --all --format csv
 ```
 
 ```
-window,turns,wall_clock_secs,accumulated_secs
+window,turns,wall_clock_secs,agent_secs
 All time,42,7320,14400
 ```
 
@@ -177,8 +177,8 @@ invoking a `suivi` command that no longer exists.
 Internal commands called by agent hooks. Not intended for direct use.
 
 ```
-suivi hook pre
-suivi hook stop
+suivi hook pre --agent <id>
+suivi hook stop --agent <id>
 ```
 
 Both read JSON from stdin and exit 0 always (errors are silent).
