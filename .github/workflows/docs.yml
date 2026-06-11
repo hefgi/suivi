@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:
@@ -40,6 +41,10 @@ jobs:
         run: bash docs/build-llms.sh
 
       - uses: actions/configure-pages@v5
+        with:
+          # The Pages site was never enabled in repo settings; the token has
+          # pages:write, so let the action create it on first run.
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
