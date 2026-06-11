@@ -12,6 +12,13 @@ use clap::Parser;
 use cli::{Cli, Command, HookEvent};
 
 fn main() {
+    // Rust ignores SIGPIPE, which turns `suivi … | head` into a panic on
+    // EPIPE. Restore the conventional Unix behavior: die quietly.
+    // SAFETY: resetting a signal disposition before any other thread exists.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     // _log_guard holds the non-blocking log writer's worker handle until the
     // end of main() so pending log events are flushed on exit.
     let _log_guard = logging::init();
@@ -30,6 +37,7 @@ fn main() {
             commands::doctor::run(args.prune, args.check, args.logs).map_err(|e| e.to_string())
         }
         Command::Stats(args) => handle_stats(args).map_err(|e| e.to_string()),
+        Command::Uninstall(args) => commands::uninstall::run(args.purge).map_err(|e| e.to_string()),
     };
 
     if let Err(e) = result {

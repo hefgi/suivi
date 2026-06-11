@@ -23,6 +23,8 @@ pub enum Command {
     Stats(StatsArgs),
     /// Database maintenance
     Doctor(DoctorArgs),
+    /// Remove suivi hooks from all agent configs
+    Uninstall(UninstallArgs),
 }
 
 #[derive(Args)]
@@ -88,6 +90,13 @@ pub struct StatsArgs {
     /// Output format (applies to default stats summary and --history; --graph and --daily are text-only)
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+}
+
+#[derive(Args)]
+pub struct UninstallArgs {
+    /// Also delete suivi's config, database, and logs
+    #[arg(long)]
+    pub purge: bool,
 }
 
 #[derive(Args)]
