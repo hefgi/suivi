@@ -1,5 +1,5 @@
 use crate::{config, db};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::io::Read;
 use tracing::{debug, info, instrument, warn};
 
@@ -40,8 +40,6 @@ fn run() -> Result<(), anyhow::Error> {
 
     let config = config::load().unwrap_or_default();
     let buffer_secs = config.tracking.human_buffer_secs as f64;
-    let agent_duration_secs = duration_ms.unwrap_or(0.0) / 1000.0;
-    let effective_duration_secs = buffer_secs + agent_duration_secs + buffer_secs;
 
     let conn = db::open()?;
     let open_turn = match db::last_open_turn(&conn, &session_id)? {
@@ -55,7 +53,10 @@ fn run() -> Result<(), anyhow::Error> {
         }
     };
 
-    let ended_at = Utc::now().to_rfc3339();
+    let now = Utc::now();
+    let agent_duration_secs = agent_duration(duration_ms, &open_turn.started_at, now);
+    let effective_duration_secs = buffer_secs + agent_duration_secs + buffer_secs;
+    let ended_at = now.to_rfc3339();
     db::stop_turn(
         &conn,
         open_turn.id,
@@ -94,6 +95,18 @@ fn run() -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+/// Agent thinking time for a closing turn. No supported agent actually sends
+/// `duration_ms` in its Stop payload (Claude Code and Codex send timestamps
+/// only), so when it is absent fall back to wall time since the turn started.
+fn agent_duration(duration_ms: Option<f64>, started_at: &str, now: DateTime<Utc>) -> f64 {
+    if let Some(ms) = duration_ms {
+        return (ms / 1000.0).max(0.0);
+    }
+    DateTime::parse_from_rfc3339(started_at)
+        .map(|s| ((now - s.with_timezone(&Utc)).num_milliseconds() as f64 / 1000.0).max(0.0))
+        .unwrap_or(0.0)
 }
 
 /// Scan a Claude Code transcript JSONL backwards for the most recent
@@ -185,5 +198,37 @@ mod tests {
     fn test_read_last_assistant_model_nonexistent_file() {
         let model = read_last_assistant_model("/tmp/does-not-exist-suivi-test.jsonl");
         assert!(model.is_none());
+    }
+
+    fn utc(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn test_agent_duration_prefers_payload_field() {
+        let d = agent_duration(
+            Some(2500.0),
+            "2024-01-01T10:00:00Z",
+            utc("2024-01-01T10:01:00Z"),
+        );
+        assert_eq!(d, 2.5);
+    }
+
+    #[test]
+    fn test_agent_duration_falls_back_to_timestamps() {
+        let d = agent_duration(None, "2024-01-01T10:00:00Z", utc("2024-01-01T10:00:03Z"));
+        assert_eq!(d, 3.0);
+    }
+
+    #[test]
+    fn test_agent_duration_clock_skew_clamped_to_zero() {
+        let d = agent_duration(None, "2024-01-01T10:00:10Z", utc("2024-01-01T10:00:00Z"));
+        assert_eq!(d, 0.0);
+    }
+
+    #[test]
+    fn test_agent_duration_unparseable_started_at() {
+        let d = agent_duration(None, "garbage", utc("2024-01-01T10:00:00Z"));
+        assert_eq!(d, 0.0);
     }
 }

@@ -12,6 +12,10 @@ impl Agent for PiAgent {
         "Pi (experimental)"
     }
 
+    fn is_installed(&self) -> bool {
+        crate::agents::home_dir_exists(".pi") || crate::agents::binary_on_path("pi")
+    }
+
     fn detect(&self, env: &Env) -> bool {
         env.vars.contains_key("PI_SESSION")
             || env

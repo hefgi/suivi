@@ -15,15 +15,8 @@ pub fn run() -> Result<()> {
             "Config already exists at {}, skipping.",
             config_path.display()
         );
-        let installed = install_hooks()?;
-        if installed.is_empty() {
-            println!("No agents configured for hook installation.");
-        } else {
-            println!("Hooks synced for:");
-            for name in &installed {
-                println!("  {}", name);
-            }
-        }
+        let report = install_hooks()?;
+        print_install_report(&report, "synced");
         return Ok(());
     }
 
@@ -76,15 +69,8 @@ pub fn run() -> Result<()> {
         println!("Config saved to {}", config_path.display());
     }
 
-    let installed = install_hooks()?;
-    if installed.is_empty() {
-        println!("No agents configured for hook installation.");
-    } else {
-        println!("Hooks configured for:");
-        for name in &installed {
-            println!("  {}", name);
-        }
-    }
+    let report = install_hooks()?;
+    print_install_report(&report, "configured");
 
     Ok(())
 }
@@ -99,11 +85,25 @@ fn split_paths(line: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn install_hooks() -> Result<Vec<String>> {
+pub struct InstallReport {
+    /// Display names of agents whose hooks were written.
+    pub installed: Vec<String>,
+    /// Display names of agents skipped because they are not on this machine.
+    pub skipped: Vec<String>,
+}
+
+pub fn install_hooks() -> Result<InstallReport> {
     let all = agents::all_agents();
-    let mut installed = Vec::new();
+    let mut report = InstallReport {
+        installed: Vec::new(),
+        skipped: Vec::new(),
+    };
 
     for agent in &all {
+        if !agent.is_installed() {
+            report.skipped.push(agent.display_name().to_string());
+            continue;
+        }
         let templates = agent.hook_templates();
         for file in templates.files {
             match &file.dest {
@@ -118,10 +118,27 @@ pub fn install_hooks() -> Result<Vec<String>> {
                 }
             }
         }
-        installed.push(agent.display_name().to_string());
+        report.installed.push(agent.display_name().to_string());
     }
 
-    Ok(installed)
+    Ok(report)
+}
+
+fn print_install_report(report: &InstallReport, verb: &str) {
+    if report.installed.is_empty() {
+        println!("No installed agents detected; no hooks were written.");
+    } else {
+        println!("Hooks {} for:", verb);
+        for name in &report.installed {
+            println!("  {}", name);
+        }
+    }
+    if !report.skipped.is_empty() {
+        println!("Skipped (not detected on this machine):");
+        for name in &report.skipped {
+            println!("  {}", name);
+        }
+    }
 }
 
 fn merge_json_hook(dest: &Path, template_content: &str) -> Result<()> {
@@ -210,14 +227,10 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_install_hooks_returns_all_agents() {
-        // install_hooks iterates all_agents() — verify it runs without error
-        // It will attempt to write to real agent config paths; that's acceptable in a dev env
-        // since merge_json_hook is idempotent and write_atomic is safe
-        let result = install_hooks();
-        assert!(result.is_ok());
-    }
+    // Note: install_hooks() itself is deliberately not exercised here — it
+    // writes to the real agent config paths under the user's home directory.
+    // The file-level logic it delegates to (merge_json_hook, write_atomic) is
+    // covered below against temp dirs.
 
     #[test]
     fn test_init_skips_when_config_exists() {

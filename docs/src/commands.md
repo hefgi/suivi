@@ -154,6 +154,24 @@ suivi doctor [--prune] [--check]
 
 Without flags, shows a summary of stale and beyond-retention turn counts.
 
+## suivi uninstall
+
+Remove suivi's hooks from all agent configs — the inverse of `suivi init`.
+
+```
+suivi uninstall [--purge]
+```
+
+- Strips `suivi hook` entries from Claude Code's `settings.json` and Codex's
+  `hooks.json`, preserving any other hooks; deletes the Pi/OpenCode plugin
+  files (only if they actually reference suivi).
+- Without `--purge`, your config, database, and logs are left in place and
+  their paths are printed.
+- `--purge` also deletes suivi's config, database, and log directories.
+
+Run this before deleting the binary — otherwise every agent prompt keeps
+invoking a `suivi` command that no longer exists.
+
 ## suivi hook pre / stop
 
 Internal commands called by agent hooks. Not intended for direct use.

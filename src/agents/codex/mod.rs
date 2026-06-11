@@ -12,6 +12,10 @@ impl Agent for CodexAgent {
         "Codex"
     }
 
+    fn is_installed(&self) -> bool {
+        crate::agents::home_dir_exists(".codex") || crate::agents::binary_on_path("codex")
+    }
+
     fn detect(&self, env: &Env) -> bool {
         env.vars.contains_key("CODEX_SESSION")
             || env

@@ -75,7 +75,11 @@ pub fn run(
 
             for turn in &turns {
                 let started = chrono::DateTime::parse_from_rfc3339(&turn.started_at)
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                    .map(|dt| {
+                        dt.with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %H:%M")
+                            .to_string()
+                    })
                     .unwrap_or_else(|_| turn.started_at.clone());
 
                 let duration = turn

@@ -1,67 +1,72 @@
 // suivi plugin for OpenCode.
 //
-// Real plugin shape per https://opencode.ai/docs/plugins/:
+// Plugin shape per https://opencode.ai/docs/plugins/:
 //   export default async ({ project, client, $, directory, worktree }) => ({
 //     event: async ({ event }) => { ... },
 //   })
 //
-// The exact path to the session id inside the event payload is not pinned by
-// the public docs; we use a defensive chain of fallbacks and silently drop
-// the turn if none resolves (matches suivi's "session_id missing → drop" rule).
+// Event payloads verified against the OpenCode SDK type definitions
+// (packages/sdk/js/src/gen/types.gen.ts):
+//   message.updated → { properties: { info: UserMessage | AssistantMessage } }
+//                     both variants carry `sessionID` and `role`
+//   session.idle    → { properties: { sessionID: string } }
+//
+// A turn is one user message → session idle. Firing `pre` per *user message*
+// (not per session.created) gives real per-turn granularity and re-arms
+// tracking after every idle; previously a session produced a single turn that
+// ended at the first idle, so a 3-hour session counted as one buffered stamp.
 
-import { execSync } from "child_process";
-import { writeFileSync, unlinkSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { spawn } from "child_process";
 
-function sessionIdFrom(event) {
-  const p = event?.properties;
-  return (
-    p?.info?.id ??
-    p?.sessionID ??
-    p?.session_id ??
-    p?.session?.id ??
-    null
-  );
-}
-
-function modelFrom(event) {
-  return event?.properties?.info?.model ?? null;
-}
-
-function pipe(cmd, payload, tag) {
-  const tmp = join(
-    tmpdir(),
-    `suivi-${tag}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`,
-  );
-  writeFileSync(tmp, payload);
+// Fire-and-forget: pipe the payload to suivi's stdin without a shell, a temp
+// file, or blocking OpenCode's event loop. Errors (e.g. suivi not on PATH)
+// are swallowed — tracking must never break the agent.
+function send(args, payload) {
   try {
-    execSync(`${cmd} < "${tmp}"`, { stdio: "ignore" });
-  } finally {
-    try {
-      unlinkSync(tmp);
-    } catch (_) {}
-  }
+    const child = spawn("suivi", args, {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    child.stdin.write(payload);
+    child.stdin.end();
+  } catch (_) {}
 }
 
-export default async ({ directory, worktree } = {}) => ({
-  event: async ({ event }) => {
-    if (!event || typeof event.type !== "string") return;
+export default async ({ directory, worktree } = {}) => {
+  // message.updated can fire repeatedly for the same message; only the first
+  // sighting of a user message starts a turn. Bounded so a long-lived
+  // process doesn't grow without limit (updates cluster at creation time, so
+  // clearing rarely risks a duplicate).
+  const seenUserMessages = new Set();
 
-    const sid = sessionIdFrom(event);
-    if (!sid) return;
+  return {
+    event: async ({ event }) => {
+      if (!event || typeof event.type !== "string") return;
 
-    if (event.type === "session.created") {
-      const payload = JSON.stringify({
-        session_id: sid,
-        cwd: directory ?? worktree ?? process.cwd(),
-        agent: "opencode",
-        model: modelFrom(event),
-      });
-      pipe("suivi hook pre --agent opencode", payload, `pre-${sid}`);
-    } else if (event.type === "session.idle") {
-      const payload = JSON.stringify({ session_id: sid });
-      pipe("suivi hook stop --agent opencode", payload, `stop-${sid}`);
-    }
-  },
-});
+      if (event.type === "message.updated") {
+        const info = event.properties?.info;
+        if (!info || info.role !== "user") return;
+        const sid = info.sessionID;
+        if (!sid) return;
+        if (info.id) {
+          if (seenUserMessages.has(info.id)) return;
+          if (seenUserMessages.size > 2048) seenUserMessages.clear();
+          seenUserMessages.add(info.id);
+        }
+        send(
+          ["hook", "pre"],
+          JSON.stringify({
+            session_id: sid,
+            cwd: directory ?? worktree ?? process.cwd(),
+            agent: "opencode",
+          }),
+        );
+      } else if (event.type === "session.idle") {
+        const sid = event.properties?.sessionID;
+        if (!sid) return;
+        send(["hook", "stop"], JSON.stringify({ session_id: sid }));
+      }
+    },
+  };
+};

@@ -80,7 +80,7 @@ Example: agent responds, user re-prompts 30 seconds later → charge 30s + T, no
 
 ### Project
 
-A directory path registered in the config. On each turn, the agent's CWD is matched against tracked paths using **nearest-ancestor matching** — the deepest tracked path that is a prefix of the CWD wins. Glob patterns (`Waver-Labs/*/`) are expanded at config load time into individual tracked entries.
+A directory path registered in the config. On each turn, the agent's CWD is matched against tracked paths using **nearest-ancestor matching** — the deepest tracked path that is a prefix of the CWD wins. Glob patterns (`Waver-Labs/*/`) are expanded against the filesystem at match time, so directories created after `suivi init` are picked up without re-running it. (Memoizing expansion per process is tracked in [#15](https://github.com/hefgi/suivi/issues/15).)
 
 ---
 
@@ -110,7 +110,7 @@ name = "Rubbr"  # optional override, defaults to directory name otherwise
 path = "~/Desktop/Hefgi/Enzyme"
 ```
 
-Project names are derived from the last path segment by default (e.g. `tracker-code`, `ecluse`, `Rubbr`). The optional `name` field overrides this. Glob paths with `*` are expanded at startup — each matched subdirectory becomes an independent project named by its own directory name.
+Project names are derived from the last path segment by default (e.g. `tracker-code`, `ecluse`, `Rubbr`). The optional `name` field overrides this. Glob paths with `*` are expanded against the filesystem when paths are matched — each matched subdirectory becomes an independent project named by its own directory name.
 
 Pruning runs automatically on `suivi init` re-runs and on `suivi stats`. Turns older than `retention_days` are deleted.
 
@@ -301,46 +301,18 @@ OpenCode uses a **JavaScript/TypeScript plugin system**. Plugins are registered 
 
 The plugin exports an async default function receiving a destructured context (`{ project, client, $, directory, worktree }`) and returns an object of named event handlers. We subscribe to the generic `event` handler and switch on `event.type`.
 
-```js
-// ~/.config/opencode/plugins/suivi.js
-import { execSync } from "child_process";
-import { writeFileSync, unlinkSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+A turn is **one user message → session idle**:
 
-const sessionIdFrom = (event) => {
-  const p = event?.properties;
-  return p?.info?.id ?? p?.sessionID ?? p?.session_id ?? p?.session?.id ?? null;
-};
+- `message.updated` with `properties.info.role === "user"` fires `suivi hook pre` (deduplicated per message id, since the event can fire more than once for the same message)
+- `session.idle` fires `suivi hook stop` via `properties.sessionID`
 
-const pipe = (cmd, payload, tag) => {
-  const tmp = join(tmpdir(), `suivi-${tag}-${Date.now()}.json`);
-  writeFileSync(tmp, payload);
-  try { execSync(`${cmd} < "${tmp}"`, { stdio: "ignore" }); }
-  finally { try { unlinkSync(tmp); } catch (_) {} }
-};
+Event payload shapes are verified against the OpenCode SDK type definitions (`packages/sdk/js/src/gen/types.gen.ts`): `message.updated` carries `properties.info` (a `UserMessage | AssistantMessage`, both with `sessionID` and `role`); `session.idle` carries `properties.sessionID`. Payloads are piped to suivi's stdin via a shell-less, non-blocking `spawn` — no temp files, and the agent's event loop is never blocked.
 
-export default async ({ directory, worktree } = {}) => ({
-  event: async ({ event }) => {
-    const sid = sessionIdFrom(event);
-    if (!sid) return;
-    if (event.type === "session.created") {
-      pipe("suivi hook pre", JSON.stringify({
-        session_id: sid,
-        cwd: directory ?? worktree ?? process.cwd(),
-        agent: "opencode",
-        model: event?.properties?.info?.model ?? null,
-      }), `pre-${sid}`);
-    } else if (event.type === "session.idle") {
-      pipe("suivi hook stop", JSON.stringify({ session_id: sid }), `stop-${sid}`);
-    }
-  },
-});
-```
+See `src/agents/opencode/hooks/suivi.js` for the installed plugin source.
 
 `suivi init` installs this file automatically when OpenCode is detected.
 
-**Note**: OpenCode has no `UserPromptSubmit` equivalent. The closest events are `session.created` and `session.idle`. Turn granularity for OpenCode is coarser — tracked per session-idle cycle, not per individual prompt. This is a known limitation tracked in Open Questions. The exact JSON path to the session id inside an event payload is not pinned in OpenCode's public docs; suivi uses a defensive fallback chain (`event.properties.info.id` first) and silently drops turns when none resolves.
+**Note**: OpenCode has no `UserPromptSubmit` hook, but per-user-message events give equivalent per-turn granularity. OpenCode does not expose the model in these events, so `model` stays NULL for OpenCode turns.
 
 ### Hook Payloads
 
@@ -433,7 +405,7 @@ Recent turns list: timestamp, project, agent, model, agent duration, effective d
 
 Cross-project comparison table.
 
-The Sessions column shows peak concurrency (max simultaneous sessions at any point in the window) and total distinct sessions.
+The Sessions column shows the number of distinct sessions per agent over the window, plus the total. Note that agents mint a new session id on every invocation, `/clear`, and resume, so this counts sessions started — not peak concurrency. (Peak-concurrency display is tracked in [#11](https://github.com/hefgi/suivi/issues/11).)
 
 ```
 suivi — Project comparison
@@ -614,7 +586,10 @@ Every pure logic module has unit tests covering the happy path and edge cases:
 
 Run with: `cargo test`
 
-### Integration Tests
+### Integration Tests (planned — not yet implemented)
+
+Status: the hook handlers currently have unit coverage for their extracted
+pieces; the end-to-end suite below has not been written yet.
 
 Test the full `hook pre` → `hook stop` → analytics pipeline against a real SQLite DB:
 
@@ -626,11 +601,11 @@ Test the full `hook pre` → `hook stop` → analytics pipeline against a real S
 - Untracked CWD: stored with `project_path = NULL`, surfaced in `suivi status`
 - Retention pruning: turns older than `retention_days` deleted, newer ones preserved
 
-### CLI Snapshot Tests
+### CLI Snapshot Tests (partially implemented)
 
 Capture the rendered output of each `suivi stats` variant and assert it matches expected output. Uses a fixed seed DB so output is deterministic. Catches regressions in formatting, column alignment, and ASCII graph rendering.
 
-Commands covered: `stats`, `stats --graph`, `stats --daily`, `stats --history`, `stats --projects`, `stats --project <name>`, `stats --agent <name>`, `status`
+Status: the JSON/CSV serializers and the graph renderer have snapshot tests; full-command snapshots for the remaining variants (`stats`, `stats --daily`, `stats --projects`, `stats --project <name>`, `stats --agent <name>`, `status`) are still to be written.
 
 ### Agent Hook Contract Tests
 
@@ -657,7 +632,7 @@ This guards against payload format changes breaking agent support silently.
 - Per-agent or per-project buffer time configuration (post-v1)
 - Support for `PostToolUse` in addition to `Stop` for finer turn granularity (post-v1)
 - Idle detection beyond the buffer cap (post-v1)
-- Codex confirmed to provide `session_id` in hook payload — same protocol as Claude Code
+- ~~Codex hook payload~~ Resolved: Codex's hook system ships `session_id` and `cwd` in `UserPromptSubmit`/`Stop` payloads and reads `~/.codex/hooks.json` with a Claude-Code-compatible shape (per https://developers.openai.com/codex/hooks). Note: neither agent sends a duration field — durations are derived from suivi's own timestamps (see #1).
 - Pi session ID: resolved via `ctx.sessionManager.getSessionFile()` (file path). suivi uses the basename (without extension) as the opaque session id. Ephemeral (`undefined`) sessions are silently dropped.
 - OpenCode session ID: extracted from event payload via defensive chain `event.properties.info.id ?? event.properties.sessionID ?? event.properties.session_id ?? event.properties.session?.id`. Pin to a single canonical path once OpenCode's plugin event types are stable.
 - OpenCode limitation: no `UserPromptSubmit` equivalent — tracking is per session-idle cycle, not per prompt. Consider whether to accept this coarser granularity or find a workaround (post-v1)

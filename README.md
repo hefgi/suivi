@@ -84,6 +84,10 @@ suivi status
 suivi doctor             # show stale turn counts
 suivi doctor --prune     # delete stale turns and expired turns
 suivi doctor --check     # SQLite integrity check
+
+# Remove suivi's hooks from all agent configs
+suivi uninstall          # keeps your config and database
+suivi uninstall --purge  # also delete config, database, and logs
 ```
 
 ## Configuration
@@ -120,7 +124,7 @@ Both are always shown. Wall-clock tells you how your day was spent. Accumulated 
 | Claude Code | ✅ v1 | `UserPromptSubmit` + `Stop` |
 | Codex | ✅ v1 | `UserPromptSubmit` + `Stop` |
 | Pi | ✅ v1 | `before_agent_start` + `agent_end` |
-| OpenCode | ✅ v1 | `session.created` + `session.idle` (session-level) |
+| OpenCode | ✅ v1 | `message.updated` (user messages) + `session.idle` |
 
 ## Contributing
 

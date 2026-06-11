@@ -12,6 +12,11 @@ impl Agent for OpenCodeAgent {
         "OpenCode"
     }
 
+    fn is_installed(&self) -> bool {
+        crate::agents::home_dir_exists(".config/opencode")
+            || crate::agents::binary_on_path("opencode")
+    }
+
     fn detect(&self, env: &Env) -> bool {
         env.vars.contains_key("OPENCODE_SESSION")
             || env
