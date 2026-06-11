@@ -48,19 +48,30 @@ pub fn open() -> Result<Connection, SuiviError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let conn = Connection::open(&path)?;
-    init_schema(&conn)?;
-    Ok(conn)
+    open_at(&path)
 }
 
-#[allow(dead_code)]
 pub fn open_at(path: &std::path::Path) -> Result<Connection, SuiviError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let conn = Connection::open(path)?;
+    configure_for_concurrency(&conn)?;
     init_schema(&conn)?;
     Ok(conn)
+}
+
+/// Hooks from parallel agent sessions are separate processes writing to the
+/// same database; `suivi stats` reads (and auto-prunes) concurrently. With
+/// rusqlite defaults a lock collision fails immediately with SQLITE_BUSY and
+/// the hook silently drops the turn. Wait out brief collisions instead, and
+/// use WAL so readers don't block the writer.
+fn configure_for_concurrency(conn: &Connection) -> Result<(), SuiviError> {
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    // WAL can be unavailable on some filesystems (e.g. network mounts);
+    // fall back to the default journal mode rather than failing.
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    Ok(())
 }
 
 pub fn init_schema(conn: &Connection) -> Result<(), SuiviError> {
@@ -339,6 +350,46 @@ mod tests {
         let (conn, _dir) = test_conn();
         // If schema init runs twice, it should not error (IF NOT EXISTS)
         init_schema(&conn).unwrap();
+    }
+
+    #[test]
+    fn test_open_configures_concurrency() {
+        let (conn, _dir) = test_conn();
+        let timeout_ms: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(timeout_ms, 5000);
+        let journal_mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(journal_mode.to_lowercase(), "wal");
+    }
+
+    #[test]
+    fn test_concurrent_connections_can_both_write() {
+        // Two connections to the same file — the second write must succeed
+        // rather than failing with SQLITE_BUSY while the first holds the db.
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.db");
+        let conn_a = open_at(&path).unwrap();
+        let conn_b = open_at(&path).unwrap();
+
+        let turn = |sess: &'static str| TurnInsert {
+            session_id: sess,
+            started_at: "2024-01-01T10:00:00Z",
+            cwd: "/tmp",
+            agent: "claude-code",
+            model: None,
+            project_path: None,
+            project_name: None,
+        };
+        insert_turn(&conn_a, &turn("a")).unwrap();
+        insert_turn(&conn_b, &turn("b")).unwrap();
+
+        let count: i64 = conn_a
+            .query_row("SELECT COUNT(*) FROM turns", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[test]
