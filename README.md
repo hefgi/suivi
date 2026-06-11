@@ -84,6 +84,10 @@ suivi status
 suivi doctor             # show stale turn counts
 suivi doctor --prune     # delete stale turns and expired turns
 suivi doctor --check     # SQLite integrity check
+
+# Remove suivi's hooks from all agent configs
+suivi uninstall          # keeps your config and database
+suivi uninstall --purge  # also delete config, database, and logs
 ```
 
 ## Configuration
