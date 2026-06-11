@@ -11,6 +11,12 @@ on:
       version:
         description: "Version to release (e.g. v0.2.0); the tag is created at the dispatched ref"
         required: true
+  # Callable from other workflows (e.g. release-branch.yml) with the same input.
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -18,7 +24,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # Tag-push runs use the tag name; dispatch runs use the supplied input.
-  RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  RELEASE_VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   build:
@@ -132,7 +138,7 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     env:
-      VERSION: ${{ github.event.inputs.version || github.ref_name }}
+      VERSION: ${{ inputs.version || github.ref_name }}
     steps:
       - name: Checkout homebrew tap
         uses: actions/checkout@v4

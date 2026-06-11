@@ -1,0 +1,29 @@
+# Cut a release by pushing a branch named release/v<semver> — e.g.
+#   git push origin main:refs/heads/release/v0.2.0
+# Exists because some automation credentials can push branches but not tags;
+# the called release workflow creates the tag at the built commit.
+name: Release from branch
+
+on:
+  push:
+    branches:
+      - "release/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: echo "version=${GITHUB_REF_NAME#release/}" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: version
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+    secrets: inherit
