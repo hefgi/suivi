@@ -12,10 +12,8 @@
 // extension as the opaque suivi session_id. If unavailable, the turn is
 // silently dropped (matches suivi's contract).
 
-import { execSync } from "child_process";
-import { writeFileSync, unlinkSync } from "fs";
-import { tmpdir } from "os";
-import { basename, join } from "path";
+import { spawn } from "child_process";
+import { basename } from "path";
 
 function sessionIdFrom(ctx) {
   const file = ctx?.sessionManager?.getSessionFile?.();
@@ -25,16 +23,19 @@ function sessionIdFrom(ctx) {
   return stripped || b || null;
 }
 
-function pipe(cmd, payload, tag) {
-  const tmp = join(tmpdir(), `suivi-${tag}.json`);
-  writeFileSync(tmp, payload);
+// Fire-and-forget: pipe the payload to suivi's stdin without a shell, a temp
+// file, or blocking Pi's event loop. Errors (e.g. suivi not on PATH) are
+// swallowed — tracking must never break the agent.
+function send(args, payload) {
   try {
-    execSync(`${cmd} < "${tmp}"`, { stdio: "ignore" });
-  } finally {
-    try {
-      unlinkSync(tmp);
-    } catch (_) {}
-  }
+    const child = spawn("suivi", args, {
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    child.on("error", () => {});
+    child.stdin.on("error", () => {});
+    child.stdin.write(payload);
+    child.stdin.end();
+  } catch (_) {}
 }
 
 export default function (pi) {
@@ -46,13 +47,13 @@ export default function (pi) {
       cwd: ctx?.cwd ?? process.cwd(),
       agent: "pi",
     });
-    pipe("suivi hook pre", payload, `pre-${sid}`);
+    send(["hook", "pre"], payload);
   });
 
   pi.on("agent_end", async (_event, ctx) => {
     const sid = sessionIdFrom(ctx);
     if (!sid) return;
     const payload = JSON.stringify({ session_id: sid });
-    pipe("suivi hook stop", payload, `stop-${sid}`);
+    send(["hook", "stop"], payload);
   });
 }
