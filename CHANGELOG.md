@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-11
+
 ### Added
 - Foundation: error types, agent trait, database schema, config loading, logging utilities
 - Agent support: Claude Code, Codex, OpenCode (session-level), Pi (experimental)
