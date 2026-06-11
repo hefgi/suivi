@@ -168,8 +168,7 @@ fn render_mini_graph(turns: &[crate::db::TurnRow], cfg: &config::Config) {
     use std::collections::BTreeMap;
     let mut by_day: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, t) in turns.iter().enumerate() {
-        let date = t.started_at.get(..10).unwrap_or("").to_string();
-        if !date.is_empty() {
+        if let Some(date) = super::local_day_key(&t.started_at) {
             by_day.entry(date).or_default().push(i);
         }
     }
