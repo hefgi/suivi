@@ -14,6 +14,19 @@ cargo install suivi
 
 Requires Rust 1.85+.
 
+## Pre-built binaries
+
+Each release ships static binaries for macOS (Intel and Apple Silicon) and
+Linux (x86_64 and aarch64, musl — no glibc dependency):
+
+```bash
+# Example: Apple Silicon
+curl -sSL https://github.com/hefgi/suivi/releases/latest/download/suivi-v0.2.0-aarch64-apple-darwin.tar.gz \
+  | tar -xz && mv suivi /usr/local/bin/
+```
+
+Browse all assets on the [releases page](https://github.com/hefgi/suivi/releases).
+
 ## Setup
 
 After installing, run:
