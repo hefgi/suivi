@@ -263,6 +263,43 @@ where
     out
 }
 
+/// Derive a human label for a graph/section window from a since-cutoff.
+///
+/// Used by project_view / agent_view to title the activity graph in a way
+/// that reflects the active flag (`--today`, `--week`, `--month`, `--since`).
+/// The match is approximate — we recognize the durations produced by
+/// `resolve_since` in main.rs, and fall back to "custom range" otherwise.
+pub fn graph_label_for(since_rfc3339: &str, now: DateTime<Utc>) -> String {
+    let Ok(since) = DateTime::parse_from_rfc3339(since_rfc3339) else {
+        return "custom range".to_string();
+    };
+    let since = since.with_timezone(&Utc);
+    let delta_secs = (now - since).num_seconds();
+
+    // Today is anchored to local midnight; it can be 0–24h ago.
+    let today_secs = now
+        .with_timezone(&chrono::Local)
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .and_then(|naive| chrono::Local.from_local_datetime(&naive).earliest())
+        .map(|d| (now - d.with_timezone(&Utc)).num_seconds())
+        .unwrap_or(0);
+
+    if (delta_secs - today_secs).abs() <= 60 {
+        return "today".to_string();
+    }
+    // Approximate matches against the 7d / 30d cutoffs produced by resolve_since.
+    let week_secs = 7 * 86400;
+    let month_secs = 30 * 86400;
+    if (delta_secs - week_secs).abs() <= 60 {
+        return "last 7 days".to_string();
+    }
+    if (delta_secs - month_secs).abs() <= 60 {
+        return "last 30 days".to_string();
+    }
+    "custom range".to_string()
+}
+
 /// Format seconds as human-readable duration: "1h 23m" or "45m" or "< 1m"
 pub fn format_duration(secs: f64) -> String {
     if secs < 60.0 {
@@ -518,5 +555,28 @@ mod tests {
         let (wall, agent) = by_day["2024-01-01"];
         assert_eq!(wall, 7200.0);
         assert_eq!(agent, 7200.0);
+    }
+
+    #[test]
+    fn test_graph_label_for_recognizes_week_and_month() {
+        let now = dt("2024-06-19T12:00:00Z");
+        let week = (now - Duration::days(7)).to_rfc3339();
+        let month = (now - Duration::days(30)).to_rfc3339();
+        assert_eq!(graph_label_for(&week, now), "last 7 days");
+        assert_eq!(graph_label_for(&month, now), "last 30 days");
+    }
+
+    #[test]
+    fn test_graph_label_for_falls_back_to_custom_range() {
+        let now = dt("2024-06-19T12:00:00Z");
+        // 3 days ago doesn't match any known cutoff — custom range.
+        let three_days = (now - Duration::days(3)).to_rfc3339();
+        assert_eq!(graph_label_for(&three_days, now), "custom range");
+    }
+
+    #[test]
+    fn test_graph_label_for_unparseable_input() {
+        let now = dt("2024-06-19T12:00:00Z");
+        assert_eq!(graph_label_for("not-a-date", now), "custom range");
     }
 }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::{config, db};
 
-use super::{agent_secs, format_duration, wall_clock_secs};
+use super::{agent_secs, format_duration, graph_label_for, wall_clock_secs};
 
 pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
@@ -41,11 +41,19 @@ pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result
     }
     println!();
 
-    // Activity graph (last 30 days)
-    let graph_since = (now - chrono::Duration::days(30)).to_rfc3339();
-    let graph_turns = db::query_turns(&conn, Some(&graph_since), None, Some(agent_name))?;
+    // Activity graph — follows the active flag's window when one is set,
+    // otherwise defaults to a 30-day rolling view.
+    let (graph_label, graph_since) = match (has_time_flag, since) {
+        (true, Some(s)) => (graph_label_for(s, now), Some(s.to_string())),
+        (true, None) => ("all time".to_string(), None),
+        (false, _) => (
+            "last 30 days".to_string(),
+            Some((now - chrono::Duration::days(30)).to_rfc3339()),
+        ),
+    };
+    let graph_turns = db::query_turns(&conn, graph_since.as_deref(), None, Some(agent_name))?;
     if !graph_turns.is_empty() {
-        println!("  {}", "Activity (last 30 days)".bold());
+        println!("  {}", format!("Activity ({})", graph_label).bold());
         render_mini_graph(&graph_turns, &cfg);
         println!();
     }
