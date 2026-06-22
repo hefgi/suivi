@@ -92,6 +92,7 @@ pub fn run(
     let conn = db::open()?;
 
     let now = chrono::Utc::now();
+    let today_start = super::local_today_start_rfc3339();
 
     // Determine time windows for the summary rows.
     let windows: Vec<(&str, Option<String>)> = if all_time {
@@ -107,16 +108,50 @@ pub fn run(
         } else {
             "Custom range"
         };
-        vec![(label, since.map(|s| s.to_string()))]
+        let win_since = if today {
+            today_start.clone()
+        } else if week {
+            Some((now - chrono::Duration::days(7)).to_rfc3339())
+        } else if month {
+            Some((now - chrono::Duration::days(30)).to_rfc3339())
+        } else {
+            since.map(|s| s.to_string())
+        };
+        vec![(label, win_since)]
     } else {
         // Default: three windows
-        let today_start = super::local_today_start_rfc3339();
         let week_start = (now - chrono::Duration::days(7)).to_rfc3339();
         vec![
-            ("Today", today_start),
+            ("Today", today_start.clone()),
             ("This week", Some(week_start)),
             ("All time", None),
         ]
+    };
+
+    // Window driving the Top projects / Top agents sections.
+    // Default behavior (no flags) keeps "this week" — that's the established UX.
+    // With an explicit flag, the Top sections follow the same window.
+    let (top_label, top_since): (&str, Option<String>) = if all_time {
+        ("all time", None)
+    } else if today {
+        ("today", today_start.clone())
+    } else if week {
+        (
+            "last 7 days",
+            Some((now - chrono::Duration::days(7)).to_rfc3339()),
+        )
+    } else if month {
+        (
+            "last 30 days",
+            Some((now - chrono::Duration::days(30)).to_rfc3339()),
+        )
+    } else if since.is_some() {
+        ("custom range", since.map(|s| s.to_string()))
+    } else {
+        (
+            "this week",
+            Some((now - chrono::Duration::days(7)).to_rfc3339()),
+        )
     };
 
     match format {
@@ -165,18 +200,17 @@ pub fn run(
             }
             println!();
 
-            // Top projects (this week) — Gap #3
-            let week_since = (now - chrono::Duration::days(7)).to_rfc3339();
-            let week_turns = db::query_turns(&conn, Some(&week_since), project, agent_filter)?;
+            // Top projects — window follows the active flag (today/week/month/since/all).
+            let top_turns = db::query_turns(&conn, top_since.as_deref(), project, agent_filter)?;
 
-            if !week_turns.iter().any(|t| t.ended_at.is_some()) {
-                // No data this week — skip the sections
+            if !top_turns.iter().any(|t| t.ended_at.is_some()) {
+                // No data in this window — skip the sections
                 return Ok(());
             }
 
             // Group by project
             let mut by_project: HashMap<String, Vec<usize>> = HashMap::new();
-            for (i, turn) in week_turns.iter().enumerate() {
+            for (i, turn) in top_turns.iter().enumerate() {
                 if turn.ended_at.is_none() {
                     continue;
                 }
@@ -198,18 +232,18 @@ pub fn run(
             projects.sort_by(|a, b| {
                 let a_acc: f64 =
                     a.1.iter()
-                        .filter_map(|&i| week_turns[i].agent_duration_secs)
+                        .filter_map(|&i| top_turns[i].agent_duration_secs)
                         .sum();
                 let b_acc: f64 =
                     b.1.iter()
-                        .filter_map(|&i| week_turns[i].agent_duration_secs)
+                        .filter_map(|&i| top_turns[i].agent_duration_secs)
                         .sum();
                 b_acc
                     .partial_cmp(&a_acc)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            println!("  {}", "Top projects (this week)".bold());
+            println!("  {}", format!("Top projects ({})", top_label).bold());
             println!("  {}", "━".repeat(80));
             println!(
                 "  {:<16}  {:>10}  {:>11}  {:>5}  {}",
@@ -227,7 +261,7 @@ pub fn run(
                     let intervals: Vec<_> = indices
                         .iter()
                         .filter_map(|&i| {
-                            let t = &week_turns[i];
+                            let t = &top_turns[i];
                             t.ended_at.as_ref()?;
                             let start = chrono::DateTime::parse_from_rfc3339(&t.started_at).ok()?;
                             let end =
@@ -243,11 +277,11 @@ pub fn run(
 
                 let accum: f64 = indices
                     .iter()
-                    .filter_map(|&i| week_turns[i].agent_duration_secs)
+                    .filter_map(|&i| top_turns[i].agent_duration_secs)
                     .sum();
 
                 let turn_count = indices.len();
-                let sessions = sessions_column(&week_turns, indices);
+                let sessions = sessions_column(&top_turns, indices);
 
                 let display_name = if name.len() > 16 {
                     format!("{}…", &name[..15])
@@ -266,9 +300,9 @@ pub fn run(
             }
             println!();
 
-            // Top agents (this week) — Gap #3
+            // Top agents — same window as Top projects above.
             let mut by_agent: HashMap<String, f64> = HashMap::new();
-            for turn in &week_turns {
+            for turn in &top_turns {
                 if turn.ended_at.is_none() {
                     continue;
                 }
@@ -284,7 +318,7 @@ pub fn run(
             let mut agents: Vec<(String, f64)> = by_agent.into_iter().collect();
             agents.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-            println!("  {}", "Top agents (this week)".bold());
+            println!("  {}", format!("Top agents ({})", top_label).bold());
             println!("  {}", "━".repeat(53));
 
             let bar_width = 20usize;
