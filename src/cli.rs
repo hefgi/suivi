@@ -117,6 +117,15 @@ pub struct DoctorArgs {
     #[arg(long)]
     pub check: bool,
 
+    /// Clamp historical turns whose agent_duration_secs or wall window
+    /// exceeds `tracking.max_turn_secs`. Without --yes, runs as a dry run.
+    #[arg(long)]
+    pub fix_outliers: bool,
+
+    /// Confirm destructive actions (currently: --fix-outliers).
+    #[arg(long)]
+    pub yes: bool,
+
     /// Print the last N lines from the suivi log (default 50 if no N given).
     /// Logs are only written when SUIVI_LOG is set.
     #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "50")]

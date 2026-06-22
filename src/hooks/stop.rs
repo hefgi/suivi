@@ -40,6 +40,7 @@ fn run() -> Result<(), anyhow::Error> {
 
     let config = config::load().unwrap_or_default();
     let buffer_secs = config.tracking.human_buffer_secs as f64;
+    let max_turn_secs = config.tracking.max_turn_secs as f64;
 
     let conn = db::open()?;
     let open_turn = match db::last_open_turn(&conn, &session_id)? {
@@ -54,7 +55,18 @@ fn run() -> Result<(), anyhow::Error> {
     };
 
     let now = Utc::now();
-    let agent_duration_secs = agent_duration(duration_ms, &open_turn.started_at, now);
+    let raw = agent_duration(duration_ms, &open_turn.started_at, now);
+    let agent_duration_secs = if raw > max_turn_secs {
+        warn!(
+            session_id = %session_id,
+            raw_secs = raw,
+            cap_secs = max_turn_secs,
+            "agent_duration_secs exceeds max_turn_secs; clamping",
+        );
+        max_turn_secs
+    } else {
+        raw
+    };
     let effective_duration_secs = buffer_secs + agent_duration_secs + buffer_secs;
     let ended_at = now.to_rfc3339();
     db::stop_turn(

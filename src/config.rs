@@ -16,6 +16,14 @@ pub struct Tracking {
     pub human_buffer_secs: u32,
     #[serde(default = "default_retention_days")]
     pub retention_days: u32,
+    /// Upper bound on per-turn agent_duration_secs. Defends against agents
+    /// whose Stop payloads omit duration_ms (we fall back to wall time since
+    /// the turn started, which can balloon to days when a session is
+    /// suspended/resumed across a sleep or network drop). Values above this
+    /// are clamped at write time; `suivi doctor --fix-outliers` clamps
+    /// existing rows.
+    #[serde(default = "default_max_turn_secs")]
+    pub max_turn_secs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +40,9 @@ fn default_human_buffer_secs() -> u32 {
 fn default_retention_days() -> u32 {
     365
 }
+fn default_max_turn_secs() -> u32 {
+    7200
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -39,6 +50,7 @@ impl Default for Config {
             tracking: Tracking {
                 human_buffer_secs: default_human_buffer_secs(),
                 retention_days: default_retention_days(),
+                max_turn_secs: default_max_turn_secs(),
             },
             projects: vec![],
         }
@@ -76,6 +88,7 @@ impl From<ConfigV0> for Config {
             tracking: Tracking {
                 human_buffer_secs: v0.buffer_mins * 60,
                 retention_days: v0.retention_days,
+                max_turn_secs: default_max_turn_secs(),
             },
             projects: v0
                 .projects
@@ -279,6 +292,7 @@ mod tests {
             tracking: Tracking {
                 human_buffer_secs: 600,
                 retention_days: 180,
+                max_turn_secs: 7200,
             },
             projects: vec![ProjectEntry {
                 path: "/home/user/project".to_string(),

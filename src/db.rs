@@ -218,6 +218,84 @@ pub fn correct_effective_duration(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct OutlierTurn {
+    pub id: i64,
+    pub session_id: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub project_name: Option<String>,
+    pub agent: String,
+    pub agent_duration_secs: f64,
+    pub effective_duration_secs: Option<f64>,
+}
+
+/// Find turns where either the agent duration OR the wall window
+/// (ended_at - started_at) exceeds the cap. The wall-window check catches
+/// rows that were already partially clamped (agent_duration_secs ≤ cap) but
+/// whose `ended_at` still reflects the original idle-conflated value.
+pub fn find_outlier_turns(
+    conn: &Connection,
+    cap_secs: f64,
+) -> Result<Vec<OutlierTurn>, SuiviError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, started_at, ended_at, project_name, agent,
+                agent_duration_secs, effective_duration_secs
+         FROM turns
+         WHERE ended_at IS NOT NULL
+           AND (
+                 agent_duration_secs > ?1
+                 OR (julianday(ended_at) - julianday(started_at)) * 86400.0 > ?1 + 1.0
+               )
+         ORDER BY (julianday(ended_at) - julianday(started_at)) * 86400.0 DESC,
+                  agent_duration_secs DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![cap_secs], |row| {
+            Ok(OutlierTurn {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                started_at: row.get(2)?,
+                ended_at: row.get(3)?,
+                project_name: row.get(4)?,
+                agent: row.get(5)?,
+                agent_duration_secs: row.get(6)?,
+                effective_duration_secs: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Clamp all outlier turns. For each affected row:
+///   - agent_duration_secs ← MIN(current, cap_secs)
+///   - effective_duration_secs ← 2 * buffer_secs + new agent_duration_secs
+///   - ended_at ← started_at + new agent_duration_secs
+/// Returns the number of rows modified.
+pub fn clamp_outliers(
+    conn: &Connection,
+    cap_secs: f64,
+    buffer_secs: f64,
+) -> Result<usize, SuiviError> {
+    let updated = conn.execute(
+        "UPDATE turns
+         SET agent_duration_secs = MIN(COALESCE(agent_duration_secs, 0), ?1),
+             effective_duration_secs = 2 * ?2
+               + MIN(COALESCE(agent_duration_secs, 0), ?1),
+             ended_at = strftime('%Y-%m-%dT%H:%M:%fZ',
+                                  julianday(started_at)
+                                  + MIN(COALESCE(agent_duration_secs, 0), ?1) / 86400.0)
+         WHERE ended_at IS NOT NULL
+           AND (
+                 agent_duration_secs > ?1
+                 OR (julianday(ended_at) - julianday(started_at)) * 86400.0 > ?1 + 1.0
+               )",
+        params![cap_secs, buffer_secs],
+    )?;
+    Ok(updated)
+}
+
 /// Set the model for a turn. Used by `hook stop` when the model is discovered
 /// after the turn was inserted (e.g. Claude Code's UserPromptSubmit payload
 /// omits the model — we read it from the transcript at Stop time instead).
@@ -681,5 +759,65 @@ mod tests {
         .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].session_id, "s1");
+    }
+
+    fn insert_completed_turn(conn: &Connection, session: &str, agent_secs: f64, eff_secs: f64) {
+        let id = insert_turn(
+            conn,
+            &TurnInsert {
+                session_id: session,
+                started_at: "2024-01-01T10:00:00Z",
+                cwd: "/tmp",
+                agent: "claude-code",
+                model: None,
+                project_path: None,
+                project_name: None,
+            },
+        )
+        .unwrap();
+        stop_turn(
+            conn,
+            id,
+            &TurnStop {
+                ended_at: "2024-01-01T10:05:00Z".to_string(),
+                agent_duration_secs: agent_secs,
+                effective_duration_secs: eff_secs,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_find_outlier_turns_only_returns_above_cap() {
+        let (conn, _dir) = test_conn();
+        insert_completed_turn(&conn, "ok1", 60.0, 660.0);
+        insert_completed_turn(&conn, "big1", 9000.0, 9600.0);
+        insert_completed_turn(&conn, "big2", 100_000.0, 100_600.0);
+
+        let outliers = find_outlier_turns(&conn, 7200.0).unwrap();
+        let sessions: Vec<&str> = outliers.iter().map(|o| o.session_id.as_str()).collect();
+        assert_eq!(sessions, vec!["big2", "big1"]);
+    }
+
+    #[test]
+    fn test_clamp_outliers_updates_columns_and_ended_at() {
+        let (conn, _dir) = test_conn();
+        insert_completed_turn(&conn, "ok1", 60.0, 660.0);
+        insert_completed_turn(&conn, "big1", 9000.0, 9600.0);
+
+        let cap = 7200.0;
+        let buffer = 300.0;
+        let updated = clamp_outliers(&conn, cap, buffer).unwrap();
+        assert_eq!(updated, 1);
+
+        let after = find_outlier_turns(&conn, cap).unwrap();
+        assert!(after.is_empty(), "no outliers should remain");
+
+        let rows = query_turns(&conn, None, None, None).unwrap();
+        let big = rows.iter().find(|r| r.session_id == "big1").unwrap();
+        assert_eq!(big.agent_duration_secs, Some(7200.0));
+        assert_eq!(big.effective_duration_secs, Some(2.0 * 300.0 + 7200.0));
+        let ok = rows.iter().find(|r| r.session_id == "ok1").unwrap();
+        assert_eq!(ok.agent_duration_secs, Some(60.0));
     }
 }

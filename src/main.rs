@@ -35,9 +35,14 @@ fn main() {
         }
         Command::Init => commands::init::run().map_err(|e| e.to_string()),
         Command::Status => commands::status::run().map_err(|e| e.to_string()),
-        Command::Doctor(args) => {
-            commands::doctor::run(args.prune, args.check, args.logs).map_err(|e| e.to_string())
-        }
+        Command::Doctor(args) => commands::doctor::run(
+            args.prune,
+            args.check,
+            args.logs,
+            args.fix_outliers,
+            args.yes,
+        )
+        .map_err(|e| e.to_string()),
         Command::Stats(args) => handle_stats(args).map_err(|e| e.to_string()),
         Command::Uninstall(args) => commands::uninstall::run(args.purge).map_err(|e| e.to_string()),
     };
