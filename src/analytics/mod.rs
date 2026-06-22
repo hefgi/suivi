@@ -146,6 +146,123 @@ pub fn sessions_column(turns: &[TurnRow], indices: &[usize]) -> String {
     format!("{}  │ {} total", parts.join("  "), total_sessions.len())
 }
 
+/// Clip a turn's contribution to a single calendar day in `tz`.
+///
+/// Returns `(wall_interval, agent_secs)` where:
+/// - `wall_interval` is the `[start - buffer, end + buffer]` interval intersected
+///   with the day (in `tz`), or `None` if the turn doesn't overlap the day at all.
+/// - `agent_secs` is the portion of `agent_duration_secs` attributable to this
+///   day, computed by linear proration over `[start, end]` (no buffer).
+///
+/// Correctly handles turns spanning midnight: each day gets only its share.
+pub fn turn_day_contribution<Tz: TimeZone>(
+    turn: &TurnRow,
+    day: NaiveDate,
+    tz: &Tz,
+    buffer_secs: u32,
+) -> Option<((DateTime<Utc>, DateTime<Utc>), f64)> {
+    let ended = turn.ended_at.as_ref()?;
+    let start = DateTime::parse_from_rfc3339(&turn.started_at)
+        .ok()?
+        .with_timezone(&Utc);
+    let end = DateTime::parse_from_rfc3339(ended).ok()?.with_timezone(&Utc);
+    if end < start {
+        return None;
+    }
+
+    let day_start = tz
+        .from_local_datetime(&day.and_hms_opt(0, 0, 0)?)
+        .earliest()?
+        .with_timezone(&Utc);
+    let day_end = tz
+        .from_local_datetime(&day.succ_opt()?.and_hms_opt(0, 0, 0)?)
+        .earliest()?
+        .with_timezone(&Utc);
+
+    let buffer = Duration::seconds(buffer_secs as i64);
+    let wall_start = (start - buffer).max(day_start);
+    let wall_end = (end + buffer).min(day_end);
+    if wall_end <= wall_start {
+        return None;
+    }
+
+    let accum_start = start.max(day_start);
+    let accum_end = end.min(day_end);
+    let day_overlap_secs = (accum_end - accum_start).num_seconds().max(0) as f64;
+    let total_turn_secs = (end - start).num_seconds().max(0) as f64;
+    let agent = if total_turn_secs > 0.0 {
+        turn.agent_duration_secs.unwrap_or(0.0) * (day_overlap_secs / total_turn_secs)
+    } else {
+        turn.agent_duration_secs.unwrap_or(0.0)
+    };
+
+    Some(((wall_start, wall_end), agent))
+}
+
+/// Build daily (wall-clock, agent_secs) totals over the span of the given turns,
+/// correctly attributing turns that span midnight to each day they touch.
+///
+/// Returns a sorted map from `YYYY-MM-DD` (local) to `(wall_secs, agent_secs)`.
+/// Days with no activity are omitted.
+pub fn compute_daily_contributions<Tz: TimeZone>(
+    turns: &[TurnRow],
+    tz: &Tz,
+    buffer_secs: u32,
+) -> std::collections::BTreeMap<String, (f64, f64)>
+where
+    Tz::Offset: std::fmt::Display,
+{
+    use std::collections::BTreeMap;
+    let mut intervals_by_day: BTreeMap<NaiveDate, Vec<(DateTime<Utc>, DateTime<Utc>)>> =
+        BTreeMap::new();
+    let mut agent_by_day: BTreeMap<NaiveDate, f64> = BTreeMap::new();
+
+    let buffer = Duration::seconds(buffer_secs as i64);
+
+    for turn in turns {
+        if turn.ended_at.is_none() {
+            continue;
+        }
+        let Ok(start) = DateTime::parse_from_rfc3339(&turn.started_at) else {
+            continue;
+        };
+        let Ok(end) = DateTime::parse_from_rfc3339(turn.ended_at.as_ref().unwrap()) else {
+            continue;
+        };
+        let start = start.with_timezone(&Utc);
+        let end = end.with_timezone(&Utc);
+        if end < start {
+            continue;
+        }
+
+        // Iterate every local day touched by the buffer-expanded window.
+        let first_day = (start - buffer).with_timezone(tz).date_naive();
+        let last_day = (end + buffer).with_timezone(tz).date_naive();
+        let mut day = first_day;
+        loop {
+            if let Some((interval, agent)) = turn_day_contribution(turn, day, tz, buffer_secs) {
+                intervals_by_day.entry(day).or_default().push(interval);
+                *agent_by_day.entry(day).or_default() += agent;
+            }
+            if day >= last_day {
+                break;
+            }
+            match day.succ_opt() {
+                Some(next) => day = next,
+                None => break,
+            }
+        }
+    }
+
+    let mut out: BTreeMap<String, (f64, f64)> = BTreeMap::new();
+    for (day, intervals) in intervals_by_day {
+        let wall = merge_intervals(intervals);
+        let agent = agent_by_day.get(&day).copied().unwrap_or(0.0);
+        out.insert(day.format("%Y-%m-%d").to_string(), (wall, agent));
+    }
+    out
+}
+
 /// Format seconds as human-readable duration: "1h 23m" or "45m" or "< 1m"
 pub fn format_duration(secs: f64) -> String {
     if secs < 60.0 {
@@ -314,5 +431,92 @@ mod tests {
         // Local-tz results depend on the host; just exercise the paths.
         assert!(local_today_start_rfc3339().is_some());
         let _ = local_day_key("2026-06-10T23:30:00Z");
+    }
+
+    fn turn(start: &str, end: &str, agent_secs_val: f64) -> crate::db::TurnRow {
+        crate::db::TurnRow {
+            id: 0,
+            session_id: "s".to_string(),
+            started_at: start.to_string(),
+            ended_at: Some(end.to_string()),
+            project_path: None,
+            project_name: None,
+            cwd: "/tmp".to_string(),
+            agent: "claude-code".to_string(),
+            model: None,
+            agent_duration_secs: Some(agent_secs_val),
+            effective_duration_secs: Some(agent_secs_val + 600.0),
+        }
+    }
+
+    #[test]
+    fn test_turn_day_contribution_fully_within_day_utc() {
+        let t = turn("2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z", 3600.0);
+        let day = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let (interval, agent) = turn_day_contribution(&t, day, &Utc, 0).unwrap();
+        assert_eq!((interval.1 - interval.0).num_seconds(), 3600);
+        assert_eq!(agent, 3600.0);
+    }
+
+    #[test]
+    fn test_turn_day_contribution_spans_midnight_utc() {
+        // Turn from 23:00 day1 to 02:00 day2 = 3h total in UTC.
+        // Day1 gets 1h, day2 gets 2h. agent_duration_secs prorated.
+        let t = turn("2024-01-01T23:00:00Z", "2024-01-02T02:00:00Z", 10800.0);
+        let day1 = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let day2 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let (_, agent1) = turn_day_contribution(&t, day1, &Utc, 0).unwrap();
+        let (_, agent2) = turn_day_contribution(&t, day2, &Utc, 0).unwrap();
+        assert!((agent1 - 3600.0).abs() < 1e-6);
+        assert!((agent2 - 7200.0).abs() < 1e-6);
+        assert!((agent1 + agent2 - 10800.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_turn_day_contribution_no_overlap() {
+        let t = turn("2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z", 3600.0);
+        let day = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        assert!(turn_day_contribution(&t, day, &Utc, 0).is_none());
+    }
+
+    #[test]
+    fn test_turn_day_contribution_unended_returns_none() {
+        let mut t = turn("2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z", 3600.0);
+        t.ended_at = None;
+        let day = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        assert!(turn_day_contribution(&t, day, &Utc, 0).is_none());
+    }
+
+    #[test]
+    fn test_compute_daily_contributions_splits_multi_day_turn() {
+        // Regression: a 39h turn must not put all 39h on its start day.
+        let t = turn(
+            "2024-06-16T17:27:00Z",
+            "2024-06-18T08:09:00Z",
+            36000.0, // 10h of agent time (post-cap)
+        );
+        let by_day = compute_daily_contributions(&[t], &Utc, 0);
+        assert_eq!(by_day.len(), 3, "expected 3 UTC days, got {:?}", by_day);
+        let (_, agent_16) = by_day["2024-06-16"];
+        assert!(
+            agent_16 < 36000.0,
+            "day 16 agent_secs {agent_16} should be < total 36000"
+        );
+        let total: f64 = by_day.values().map(|(_, a)| a).sum();
+        assert!(
+            (total - 36000.0).abs() < 1e-3,
+            "total {total} should equal 36000"
+        );
+    }
+
+    #[test]
+    fn test_compute_daily_contributions_two_turns_same_day() {
+        let t1 = turn("2024-01-01T10:00:00Z", "2024-01-01T11:00:00Z", 3600.0);
+        let t2 = turn("2024-01-01T14:00:00Z", "2024-01-01T15:00:00Z", 3600.0);
+        let by_day = compute_daily_contributions(&[t1, t2], &Utc, 0);
+        assert_eq!(by_day.len(), 1);
+        let (wall, agent) = by_day["2024-01-01"];
+        assert_eq!(wall, 7200.0);
+        assert_eq!(agent, 7200.0);
     }
 }

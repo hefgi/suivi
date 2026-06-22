@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::{config, db};
 
-use super::{agent_secs, format_duration, merge_intervals, wall_clock_secs};
+use super::{agent_secs, format_duration, wall_clock_secs};
 
 pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
@@ -165,68 +165,27 @@ fn filter_by_name(
 }
 
 fn render_mini_graph(turns: &[crate::db::TurnRow], cfg: &config::Config) {
-    use std::collections::BTreeMap;
-    let mut by_day: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    for (i, t) in turns.iter().enumerate() {
-        if let Some(date) = super::local_day_key(&t.started_at) {
-            by_day.entry(date).or_default().push(i);
-        }
-    }
+    let by_day = super::compute_daily_contributions(
+        turns,
+        &chrono::Local,
+        cfg.tracking.human_buffer_secs,
+    );
 
     let max_secs: f64 = by_day
         .values()
-        .map(|idxs| {
-            idxs.iter()
-                .filter_map(|&i| {
-                    if turns[i].ended_at.is_some() {
-                        turns[i].agent_duration_secs
-                    } else {
-                        None
-                    }
-                })
-                .sum::<f64>()
-        })
+        .map(|(_, agent)| *agent)
         .fold(0.0_f64, f64::max);
 
     let bar_width = 24usize;
-    for (date, idxs) in &by_day {
-        let wall: f64 = {
-            use chrono::Duration;
-            let buffer = Duration::seconds(cfg.tracking.human_buffer_secs as i64);
-            let intervals: Vec<_> = idxs
-                .iter()
-                .filter_map(|&i| {
-                    let t = &turns[i];
-                    t.ended_at.as_ref()?;
-                    let start = chrono::DateTime::parse_from_rfc3339(&t.started_at).ok()?;
-                    let end = chrono::DateTime::parse_from_rfc3339(t.ended_at.as_ref()?).ok()?;
-                    Some((
-                        start.with_timezone(&chrono::Utc) - buffer,
-                        end.with_timezone(&chrono::Utc) + buffer,
-                    ))
-                })
-                .collect();
-            merge_intervals(intervals)
-        };
-        let accum: f64 = idxs
-            .iter()
-            .filter_map(|&i| {
-                if turns[i].ended_at.is_some() {
-                    turns[i].agent_duration_secs
-                } else {
-                    None
-                }
-            })
-            .sum();
-
+    for (date, (wall, agent)) in &by_day {
         let wall_filled = if max_secs > 0.0 {
             (wall / max_secs * bar_width as f64).round() as usize
         } else {
             0
         }
         .min(bar_width);
-        let accum_filled = if max_secs > 0.0 {
-            (accum / max_secs * bar_width as f64).round() as usize
+        let agent_filled = if max_secs > 0.0 {
+            (agent / max_secs * bar_width as f64).round() as usize
         } else {
             0
         }
@@ -241,18 +200,18 @@ fn render_mini_graph(turns: &[crate::db::TurnRow], cfg: &config::Config) {
                 "░".repeat(bar_width - wall_filled)
             )
             .green(),
-            format_duration(wall)
+            format_duration(*wall)
         );
         println!(
             "  {}  agent time  {}  {}",
             " ".repeat(10),
             format!(
                 "{}{}",
-                "█".repeat(accum_filled),
-                "░".repeat(bar_width - accum_filled)
+                "█".repeat(agent_filled),
+                "░".repeat(bar_width - agent_filled)
             )
             .cyan(),
-            format_duration(accum)
+            format_duration(*agent)
         );
     }
 }
