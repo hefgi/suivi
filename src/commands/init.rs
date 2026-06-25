@@ -62,6 +62,7 @@ pub fn run() -> Result<()> {
         let cfg = config::Config {
             tracking: config::Tracking::default(),
             projects,
+            exclude: vec![],
         };
 
         config::save(&cfg)?;

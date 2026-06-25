@@ -43,6 +43,14 @@ fn run(agent_flag: Option<&str>) -> Result<(), anyhow::Error> {
     };
 
     let config = config::load().unwrap_or_default();
+
+    // Skip turns whose cwd is on the exclude list (e.g. tempfile-using tests,
+    // OS scratch dirs). The user never wants these recorded.
+    if config::is_excluded(&config, &payload.cwd) {
+        debug!(cwd = %payload.cwd, "cwd is excluded; skipping turn");
+        return Ok(());
+    }
+
     let (project_path, project_name) = match config::find_project(&config, &payload.cwd) {
         Some((entry, path)) => {
             let name = entry

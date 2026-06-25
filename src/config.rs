@@ -10,6 +10,11 @@ pub struct ProjectEntry {
     pub name: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExcludeEntry {
+    pub path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Tracking {
     #[serde(default = "default_human_buffer_secs")]
@@ -32,6 +37,45 @@ pub struct Config {
     pub tracking: Tracking,
     #[serde(default)]
     pub projects: Vec<ProjectEntry>,
+    /// Paths whose subtree should never be tracked. User-provided entries are
+    /// combined with the built-in defaults from `default_excludes()`.
+    #[serde(default)]
+    pub exclude: Vec<ExcludeEntry>,
+}
+
+/// Built-in exclude paths. These are noise sources (test temp dirs, OS
+/// scratch space) that should never be recorded as agent activity.
+pub fn default_excludes() -> Vec<String> {
+    vec![
+        // macOS per-user temp dir under /private/var/folders
+        "/private/var/folders".to_string(),
+        // Generic /tmp
+        "/tmp".to_string(),
+        // User-level cache dir
+        "~/.cache".to_string(),
+    ]
+}
+
+/// True if `cwd` falls under any user exclude entry or built-in default.
+/// Matches a path if `cwd == entry` or `cwd` starts with `entry + '/'`,
+/// after `~` expansion. Comparison is on the literal path strings — we don't
+/// canonicalize, because hook-time cwd values from agent payloads aren't
+/// canonicalized either.
+pub fn is_excluded(config: &Config, cwd: &str) -> bool {
+    let user_entries = config.exclude.iter().map(|e| e.path.clone());
+    let all_entries = user_entries.chain(default_excludes());
+    for raw in all_entries {
+        let expanded = expand_tilde(&raw);
+        let expanded = expanded.trim_end_matches('/');
+        if cwd == expanded {
+            return true;
+        }
+        let with_slash = format!("{}/", expanded);
+        if cwd.starts_with(&with_slash) {
+            return true;
+        }
+    }
+    false
 }
 
 fn default_human_buffer_secs() -> u32 {
@@ -53,6 +97,7 @@ impl Default for Config {
                 max_turn_secs: default_max_turn_secs(),
             },
             projects: vec![],
+            exclude: vec![],
         }
     }
 }
@@ -104,6 +149,7 @@ impl From<ConfigV0> for Config {
                         })
                 })
                 .collect(),
+            exclude: vec![],
         }
     }
 }
@@ -298,6 +344,7 @@ mod tests {
                 path: "/home/user/project".to_string(),
                 name: Some("My Project".to_string()),
             }],
+            exclude: vec![],
         };
         save_to(&original, &path).unwrap();
         let loaded = load_from(&path).unwrap();
@@ -353,6 +400,7 @@ paths = ["/a", "/b", "/c"]
                 path: "/home/user/project".to_string(),
                 name: Some("Test".to_string()),
             }],
+            exclude: vec![],
         };
         let result = find_project(&config, "/home/user/project");
         assert!(result.is_some());
@@ -370,6 +418,7 @@ paths = ["/a", "/b", "/c"]
                 path: dir.path().to_str().unwrap().to_string(),
                 name: None,
             }],
+            exclude: vec![],
         };
         let result = find_project(&config, subdir.to_str().unwrap());
         assert!(result.is_some());
@@ -396,6 +445,7 @@ paths = ["/a", "/b", "/c"]
                     name: Some("Child".to_string()),
                 },
             ],
+            exclude: vec![],
         };
         let result = find_project(&config, grandchild.to_str().unwrap());
         assert!(result.is_some());
@@ -411,6 +461,7 @@ paths = ["/a", "/b", "/c"]
                 path: "/home/user/project".to_string(),
                 name: None,
             }],
+            exclude: vec![],
         };
         let result = find_project(&config, "/other/path");
         assert!(result.is_none());
@@ -468,6 +519,7 @@ paths = ["/a", "/b", "/c"]
                     name: Some("myso".to_string()),
                 },
             ],
+            exclude: vec![],
         };
 
         // cwd deep under onyx → onyx wins (deepest ancestor)
@@ -497,10 +549,68 @@ paths = ["/a", "/b", "/c"]
                 path: dir.path().to_str().unwrap().to_string(),
                 name: None,
             }],
+            exclude: vec![],
         };
         let result = find_project(&config, dir.path().to_str().unwrap());
         assert!(result.is_some());
         let (entry, _) = result.unwrap();
         assert!(entry.name.is_none());
+    }
+
+    fn empty_config_with_excludes(paths: &[&str]) -> Config {
+        let mut cfg = Config::default();
+        cfg.exclude = paths
+            .iter()
+            .map(|p| ExcludeEntry {
+                path: p.to_string(),
+            })
+            .collect();
+        cfg
+    }
+
+    #[test]
+    fn test_is_excluded_default_macos_temp() {
+        let cfg = Config::default();
+        assert!(is_excluded(
+            &cfg,
+            "/private/var/folders/mk/jw1fwk8d3bvgxkwsm3j3cwm00000gn/T"
+        ));
+    }
+
+    #[test]
+    fn test_is_excluded_default_tmp() {
+        let cfg = Config::default();
+        assert!(is_excluded(&cfg, "/tmp/some/sub"));
+        assert!(is_excluded(&cfg, "/tmp"));
+    }
+
+    #[test]
+    fn test_is_excluded_does_not_match_prefix_collision() {
+        // /tmpfoo must NOT match /tmp.
+        let cfg = Config::default();
+        assert!(!is_excluded(&cfg, "/tmpfoo"));
+        assert!(!is_excluded(&cfg, "/tmpfoo/bar"));
+    }
+
+    #[test]
+    fn test_is_excluded_honors_user_entries() {
+        let cfg = empty_config_with_excludes(&["/data/scratch"]);
+        assert!(is_excluded(&cfg, "/data/scratch"));
+        assert!(is_excluded(&cfg, "/data/scratch/nested"));
+        assert!(!is_excluded(&cfg, "/data/other"));
+    }
+
+    #[test]
+    fn test_is_excluded_expands_tilde_in_entry() {
+        let cfg = empty_config_with_excludes(&["~/.cache"]);
+        let home = dirs::home_dir().unwrap();
+        let cwd = format!("{}/.cache/sub", home.display());
+        assert!(is_excluded(&cfg, &cwd));
+    }
+
+    #[test]
+    fn test_is_excluded_non_match() {
+        let cfg = Config::default();
+        assert!(!is_excluded(&cfg, "/Users/foo/code/project"));
     }
 }
