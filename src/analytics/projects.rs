@@ -9,7 +9,7 @@ use super::{format_duration, sessions_column};
 pub fn run(since: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
     let conn = db::open()?;
-    let turns = db::query_turns(&conn, since, None, agent_filter)?;
+    let turns = db::query_turns(&conn, since, None, None, agent_filter)?;
 
     // Group by project name / path / untracked
     let mut by_project: HashMap<String, Vec<usize>> = HashMap::new();

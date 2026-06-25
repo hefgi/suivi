@@ -29,7 +29,8 @@ pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result
     };
 
     for (label, win_since) in &windows {
-        let turns = db::query_turns(&conn, win_since.as_deref(), None, Some(agent_name))?;
+        let turns =
+            db::query_turns(&conn, win_since.as_deref(), None, None, Some(agent_name))?;
         let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
         let agent = agent_secs(&turns);
         println!(
@@ -51,7 +52,8 @@ pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result
             Some((now - chrono::Duration::days(30)).to_rfc3339()),
         ),
     };
-    let graph_turns = db::query_turns(&conn, graph_since.as_deref(), None, Some(agent_name))?;
+    let graph_turns =
+        db::query_turns(&conn, graph_since.as_deref(), None, None, Some(agent_name))?;
     if !graph_turns.is_empty() {
         println!("  {}", format!("Activity ({})", graph_label).bold());
         render_mini_graph(&graph_turns, &cfg);
@@ -59,7 +61,7 @@ pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result
     }
 
     // Base turns for breakdowns
-    let base_turns = db::query_turns(&conn, since, None, Some(agent_name))?;
+    let base_turns = db::query_turns(&conn, since, None, None, Some(agent_name))?;
 
     // Project breakdown
     let mut by_project: HashMap<String, f64> = HashMap::new();

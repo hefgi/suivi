@@ -249,7 +249,7 @@ mod tests {
         insert_open(&conn, "sess", "2024-01-01T10:00:00Z");
         let closed = close_orphaned_turn(&conn, "sess", utc("2024-01-01T10:02:00Z")).unwrap();
         assert!(closed);
-        let rows = db::query_turns(&conn, None, None, None).unwrap();
+        let rows = db::query_turns(&conn, None, None, None, None).unwrap();
         assert_eq!(rows[0].agent_duration_secs, Some(120.0));
         assert_eq!(rows[0].effective_duration_secs, Some(120.0));
         assert!(rows[0].ended_at.is_some());
@@ -288,7 +288,7 @@ mod tests {
         .unwrap();
         // Next prompt 30s after the stop, buffer 300s → corrected to gap + agent time.
         apply_buffer_correction(&conn, "sess", utc("2024-01-01T10:01:30Z"), 300.0);
-        let rows = db::query_turns(&conn, None, None, None).unwrap();
+        let rows = db::query_turns(&conn, None, None, None, None).unwrap();
         assert_eq!(rows[0].effective_duration_secs, Some(90.0));
     }
 
@@ -308,7 +308,7 @@ mod tests {
         .unwrap();
         // Next prompt 20 minutes later (> buffer*2) → keep the buffered value.
         apply_buffer_correction(&conn, "sess", utc("2024-01-01T10:21:00Z"), 300.0);
-        let rows = db::query_turns(&conn, None, None, None).unwrap();
+        let rows = db::query_turns(&conn, None, None, None, None).unwrap();
         assert_eq!(rows[0].effective_duration_secs, Some(660.0));
     }
 

@@ -329,6 +329,7 @@ pub struct TurnRow {
 pub fn query_turns(
     conn: &Connection,
     since: Option<&str>,
+    until: Option<&str>,
     project_path: Option<&str>,
     agent: Option<&str>,
 ) -> Result<Vec<TurnRow>, SuiviError> {
@@ -341,6 +342,10 @@ pub fn query_turns(
     if let Some(s) = since {
         sql.push_str(" AND started_at >= ?");
         param_values.push(s.to_string());
+    }
+    if let Some(u) = until {
+        sql.push_str(" AND started_at < ?");
+        param_values.push(u.to_string());
     }
     if let Some(p) = project_path {
         sql.push_str(" AND project_path = ?");
@@ -494,7 +499,7 @@ mod tests {
             },
         )
         .unwrap();
-        let rows = query_turns(&conn, None, None, None).unwrap();
+        let rows = query_turns(&conn, None, None, None, None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].session_id, "sess1");
         assert_eq!(rows[0].agent, "claude-code");
@@ -521,7 +526,7 @@ mod tests {
         };
         let updated = stop_turn(&conn, id, &stop).unwrap();
         assert!(updated);
-        let rows = query_turns(&conn, None, None, None).unwrap();
+        let rows = query_turns(&conn, None, None, None, None).unwrap();
         assert_eq!(rows[0].ended_at.as_deref(), Some("2024-01-01T10:05:00Z"));
         assert_eq!(rows[0].agent_duration_secs, Some(30.0));
     }
@@ -621,7 +626,7 @@ mod tests {
         };
         stop_turn(&conn, id, &stop).unwrap();
         correct_effective_duration(&conn, id, 400.0).unwrap();
-        let rows = query_turns(&conn, None, None, None).unwrap();
+        let rows = query_turns(&conn, None, None, None, None).unwrap();
         assert_eq!(rows[0].effective_duration_secs, Some(400.0));
     }
 
@@ -714,9 +719,61 @@ mod tests {
             )
             .unwrap();
         }
-        let rows = query_turns(&conn, None, Some("/proj/a"), None).unwrap();
+        let rows = query_turns(&conn, None, None, Some("/proj/a"), None).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].agent, "claude-code");
+    }
+
+    #[test]
+    fn test_query_turns_until_excludes_after() {
+        let (conn, _dir) = test_conn();
+        for (sess, started, ended) in [
+            ("early", "2024-06-01T10:00:00Z", "2024-06-01T10:05:00Z"),
+            ("mid", "2024-06-15T10:00:00Z", "2024-06-15T10:05:00Z"),
+            ("late", "2024-06-30T10:00:00Z", "2024-06-30T10:05:00Z"),
+        ] {
+            let id = insert_turn(
+                &conn,
+                &TurnInsert {
+                    session_id: sess,
+                    started_at: started,
+                    cwd: "/tmp",
+                    agent: "claude-code",
+                    model: None,
+                    project_path: None,
+                    project_name: None,
+                },
+            )
+            .unwrap();
+            stop_turn(
+                &conn,
+                id,
+                &TurnStop {
+                    ended_at: ended.to_string(),
+                    agent_duration_secs: 1.0,
+                    effective_duration_secs: 1.0,
+                },
+            )
+            .unwrap();
+        }
+
+        // until is exclusive: `< 2024-06-16T00:00:00Z` keeps early + mid.
+        let rows =
+            query_turns(&conn, None, Some("2024-06-16T00:00:00Z"), None, None).unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["early", "mid"]);
+
+        // Combined: since 2024-06-10, until 2024-06-20 → only mid.
+        let rows = query_turns(
+            &conn,
+            Some("2024-06-10T00:00:00Z"),
+            Some("2024-06-20T00:00:00Z"),
+            None,
+            None,
+        )
+        .unwrap();
+        let ids: Vec<&str> = rows.iter().map(|r| r.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["mid"]);
     }
 
     #[test]
@@ -753,6 +810,7 @@ mod tests {
         let rows = query_turns(
             &conn,
             Some("2024-06-01T00:00:00Z"),
+            None,
             Some("/proj/a"),
             Some("claude-code"),
         )
@@ -813,7 +871,7 @@ mod tests {
         let after = find_outlier_turns(&conn, cap).unwrap();
         assert!(after.is_empty(), "no outliers should remain");
 
-        let rows = query_turns(&conn, None, None, None).unwrap();
+        let rows = query_turns(&conn, None, None, None, None).unwrap();
         let big = rows.iter().find(|r| r.session_id == "big1").unwrap();
         assert_eq!(big.agent_duration_secs, Some(7200.0));
         assert_eq!(big.effective_duration_secs, Some(2.0 * 300.0 + 7200.0));

@@ -64,7 +64,7 @@ pub fn run() -> Result<()> {
         .map(|dt| dt.to_rfc3339())
         .unwrap_or_default();
 
-    let turns = db::query_turns(&conn, Some(&since), None, None).unwrap_or_default();
+    let turns = db::query_turns(&conn, Some(&since), None, None, None).unwrap_or_default();
     let untracked: Vec<_> = turns
         .iter()
         .filter(|t| t.ended_at.is_some() && t.project_path.is_none())

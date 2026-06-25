@@ -41,7 +41,7 @@ fn collect_summary_rows(
 ) -> Result<Vec<StatsSummaryRow>> {
     let mut rows = Vec::with_capacity(windows.len());
     for (label, win_since) in windows {
-        let turns = db::query_turns(conn, win_since.as_deref(), project, agent_filter)?;
+        let turns = db::query_turns(conn, win_since.as_deref(), None, project, agent_filter)?;
         let turn_count = turns.iter().filter(|t| t.ended_at.is_some()).count();
         let wall = wall_clock_secs(&turns, buffer_secs);
         let agent = agent_secs(&turns);
@@ -158,7 +158,7 @@ pub fn run(
         OutputFormat::Json => {
             // Full turn-level export when --all, summary rows otherwise (Gap #11)
             if all_time {
-                let turns = db::query_turns(&conn, None, project, agent_filter)?;
+                let turns = db::query_turns(&conn, None, None, project, agent_filter)?;
                 println!("{}", turns_to_json_full(&turns)?);
             } else {
                 let rows = collect_summary_rows(
@@ -187,7 +187,8 @@ pub fn run(
             println!();
 
             for (label, win_since) in &windows {
-                let turns = db::query_turns(&conn, win_since.as_deref(), project, agent_filter)?;
+                let turns =
+                    db::query_turns(&conn, win_since.as_deref(), None, project, agent_filter)?;
                 let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
                 let agent = agent_secs(&turns);
 
@@ -201,7 +202,8 @@ pub fn run(
             println!();
 
             // Top projects — window follows the active flag (today/week/month/since/all).
-            let top_turns = db::query_turns(&conn, top_since.as_deref(), project, agent_filter)?;
+            let top_turns =
+                db::query_turns(&conn, top_since.as_deref(), None, project, agent_filter)?;
 
             if !top_turns.iter().any(|t| t.ended_at.is_some()) {
                 // No data in this window — skip the sections

@@ -12,7 +12,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
     let now = chrono::Utc::now();
 
     // Resolve the project_path that matches the given name/path fragment
-    let all_turns = db::query_turns(&conn, None, None, None)?;
+    let all_turns = db::query_turns(&conn, None, None, None, None)?;
     let matched_path = resolve_project_path(&all_turns, project_name);
 
     println!("{} — Project view", project_name.bold());
@@ -33,7 +33,8 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
     };
 
     for (label, win_since) in &windows {
-        let turns = db::query_turns(&conn, win_since.as_deref(), matched_path.as_deref(), None)?;
+        let turns =
+            db::query_turns(&conn, win_since.as_deref(), None, matched_path.as_deref(), None)?;
         let turns = filter_by_name(&turns, project_name, matched_path.as_deref());
         let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
         let agent = agent_secs(&turns);
@@ -56,8 +57,13 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
             Some((now - chrono::Duration::days(30)).to_rfc3339()),
         ),
     };
-    let graph_turns =
-        db::query_turns(&conn, graph_since.as_deref(), matched_path.as_deref(), None)?;
+    let graph_turns = db::query_turns(
+        &conn,
+        graph_since.as_deref(),
+        None,
+        matched_path.as_deref(),
+        None,
+    )?;
     let graph_turns = filter_by_name(&graph_turns, project_name, matched_path.as_deref());
     if !graph_turns.is_empty() {
         println!("  {}", format!("Activity ({})", graph_label).bold());
@@ -66,7 +72,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
     }
 
     // Agent breakdown
-    let base_turns = db::query_turns(&conn, since, matched_path.as_deref(), None)?;
+    let base_turns = db::query_turns(&conn, since, None, matched_path.as_deref(), None)?;
     let base_turns = filter_by_name(&base_turns, project_name, matched_path.as_deref());
 
     let mut by_agent: HashMap<String, f64> = HashMap::new();

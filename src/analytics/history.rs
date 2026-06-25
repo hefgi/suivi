@@ -58,7 +58,7 @@ pub fn run(
     format: &OutputFormat,
 ) -> Result<()> {
     let conn = db::open()?;
-    let turns = db::query_turns(&conn, since, project, agent_filter)?;
+    let turns = db::query_turns(&conn, since, None, project, agent_filter)?;
 
     match format {
         OutputFormat::Json => {
