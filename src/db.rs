@@ -307,6 +307,58 @@ pub fn set_model(conn: &Connection, id: i64, model: &str) -> Result<(), SuiviErr
     Ok(())
 }
 
+/// Turns with `project_name IS NULL` whose `cwd` is exactly `prefix` or
+/// nested under `prefix/`. Used by `suivi track` to find candidate turns
+/// for backfill; the caller routes each result through `config::find_project`
+/// to respect the longest-match invariant (a deeper tracked project keeps
+/// ownership of its own turns).
+///
+/// Returns `(id, cwd, started_at)` tuples. `started_at` lets the caller
+/// derive the backfill date range without re-querying.
+pub fn unattributed_turns_under(
+    conn: &Connection,
+    prefix: &str,
+) -> Result<Vec<(i64, String, String)>, SuiviError> {
+    let exact = prefix.trim_end_matches('/').to_string();
+    // Escape LIKE metachars in the prefix so paths containing `%` or `_`
+    // don't accidentally match unrelated cwd values.
+    let escaped = exact
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let like = format!("{}/%", escaped);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, cwd, started_at FROM turns
+         WHERE project_name IS NULL
+           AND (cwd = ?1 OR cwd LIKE ?2 ESCAPE '\\')",
+    )?;
+    let rows = stmt
+        .query_map(params![exact, like], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Set project attribution for an existing turn. Mirrors `set_model`.
+pub fn set_project_attribution(
+    conn: &Connection,
+    id: i64,
+    project_path: &str,
+    project_name: Option<&str>,
+) -> Result<(), SuiviError> {
+    conn.execute(
+        "UPDATE turns SET project_path = ?1, project_name = ?2 WHERE id = ?3",
+        params![project_path, project_name, id],
+    )?;
+    Ok(())
+}
+
 pub const STALE_FILTER: &str =
     "NOT (ended_at IS NULL AND (julianday('now') - julianday(started_at)) * 86400.0 > 7200)";
 
@@ -774,6 +826,93 @@ mod tests {
         .unwrap();
         let ids: Vec<&str> = rows.iter().map(|r| r.session_id.as_str()).collect();
         assert_eq!(ids, vec!["mid"]);
+    }
+
+    fn insert_with_cwd_and_project(
+        conn: &Connection,
+        session: &str,
+        cwd: &str,
+        project_name: Option<&str>,
+    ) {
+        let id = insert_turn(
+            conn,
+            &TurnInsert {
+                session_id: session,
+                started_at: "2024-06-01T10:00:00Z",
+                cwd,
+                agent: "claude-code",
+                model: None,
+                project_path: None,
+                project_name,
+            },
+        )
+        .unwrap();
+        stop_turn(
+            conn,
+            id,
+            &TurnStop {
+                ended_at: "2024-06-01T10:05:00Z".to_string(),
+                agent_duration_secs: 60.0,
+                effective_duration_secs: 660.0,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_unattributed_turns_under_finds_by_prefix() {
+        let (conn, _dir) = test_conn();
+        insert_with_cwd_and_project(&conn, "exact", "/code/limes", None);
+        insert_with_cwd_and_project(&conn, "nested", "/code/limes/sub/dir", None);
+        insert_with_cwd_and_project(&conn, "sibling", "/code/limeskeeper", None);
+        insert_with_cwd_and_project(&conn, "outside", "/code/other", None);
+
+        let rows = unattributed_turns_under(&conn, "/code/limes").unwrap();
+        let sessions: Vec<&str> = rows.iter().map(|(_, _, _)| "").collect();
+        let _ = sessions; // unused
+        let mut ids: Vec<&str> = rows
+            .iter()
+            .map(|(_, cwd, _)| cwd.as_str())
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["/code/limes", "/code/limes/sub/dir"]);
+    }
+
+    #[test]
+    fn test_unattributed_turns_under_excludes_attributed() {
+        let (conn, _dir) = test_conn();
+        insert_with_cwd_and_project(&conn, "null", "/code/limes", None);
+        insert_with_cwd_and_project(&conn, "attributed", "/code/limes", Some("limes"));
+
+        let rows = unattributed_turns_under(&conn, "/code/limes").unwrap();
+        assert_eq!(rows.len(), 1, "only the null-project row should be returned");
+    }
+
+    #[test]
+    fn test_unattributed_turns_under_escapes_like_metachars() {
+        let (conn, _dir) = test_conn();
+        // `cwd` containing `%`: only the exact match should be returned,
+        // not other paths that share the same prefix-minus-metachar.
+        insert_with_cwd_and_project(&conn, "pct", "/code/100%project", None);
+        insert_with_cwd_and_project(&conn, "decoy", "/code/100Xproject", None);
+
+        let rows = unattributed_turns_under(&conn, "/code/100%project").unwrap();
+        let cwds: Vec<&str> = rows.iter().map(|(_, c, _)| c.as_str()).collect();
+        assert_eq!(cwds, vec!["/code/100%project"]);
+    }
+
+    #[test]
+    fn test_set_project_attribution_updates_both_columns() {
+        let (conn, _dir) = test_conn();
+        insert_with_cwd_and_project(&conn, "s", "/code/limes", None);
+        let rows = query_turns(&conn, None, None, None, None).unwrap();
+        let id = rows[0].id;
+
+        set_project_attribution(&conn, id, "/code/limes", Some("Limes")).unwrap();
+
+        let rows = query_turns(&conn, None, None, None, None).unwrap();
+        assert_eq!(rows[0].project_path.as_deref(), Some("/code/limes"));
+        assert_eq!(rows[0].project_name.as_deref(), Some("Limes"));
     }
 
     #[test]
