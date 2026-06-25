@@ -23,8 +23,38 @@ pub enum Command {
     Stats(StatsArgs),
     /// Database maintenance
     Doctor(DoctorArgs),
+    /// Start tracking a project directory and backfill historical attribution
+    Track(TrackArgs),
+    /// Remove a project from tracking (history is preserved)
+    Untrack(UntrackArgs),
     /// Remove suivi hooks from all agent configs
     Uninstall(UninstallArgs),
+}
+
+#[derive(Args)]
+pub struct TrackArgs {
+    /// Directory to track (absolute, relative, or ~-prefixed)
+    #[arg(value_name = "PATH")]
+    pub path: String,
+
+    /// Friendly name shown in stats (defaults to directory basename)
+    #[arg(long, value_name = "NAME")]
+    pub name: Option<String>,
+
+    /// Skip historical backfill of unattributed turns under this path
+    #[arg(long)]
+    pub no_backfill: bool,
+}
+
+#[derive(Args)]
+pub struct UntrackArgs {
+    /// Path or name of the tracked project to remove
+    #[arg(value_name = "PATH_OR_NAME")]
+    pub target: String,
+
+    /// Skip the (y/N) confirmation prompt
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Args)]

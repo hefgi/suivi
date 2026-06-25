@@ -45,6 +45,8 @@ fn main() {
         )
         .map_err(|e| e.to_string()),
         Command::Stats(args) => handle_stats(args).map_err(|e| e.to_string()),
+        Command::Track(args) => commands::track::run(args).map_err(|e| e.to_string()),
+        Command::Untrack(args) => commands::untrack::run(args).map_err(|e| e.to_string()),
         Command::Uninstall(args) => commands::uninstall::run(args.purge).map_err(|e| e.to_string()),
     };
 
