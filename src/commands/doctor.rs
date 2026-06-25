@@ -8,6 +8,7 @@ pub fn run(
     check: bool,
     logs: Option<usize>,
     fix_outliers: bool,
+    prune_excluded: bool,
     yes: bool,
 ) -> Result<()> {
     if let Some(n) = logs {
@@ -16,6 +17,10 @@ pub fn run(
 
     if fix_outliers {
         return run_fix_outliers(yes);
+    }
+
+    if prune_excluded {
+        return run_prune_excluded(yes);
     }
 
     let conn = db::open()?;
@@ -142,6 +147,80 @@ fn run_fix_outliers(yes: bool) -> Result<()> {
             (2.0 * buffer + cap) as u64,
         )
         .green()
+    );
+    Ok(())
+}
+
+fn run_prune_excluded(yes: bool) -> Result<()> {
+    let cfg = config::load().unwrap_or_default();
+    let conn = db::open()?;
+
+    // Collect every distinct cwd in the DB and check it against the exclude
+    // list. Doing the match in Rust (rather than SQL) keeps the matching
+    // logic identical to the hook-time check in `config::is_excluded`.
+    let mut stmt = conn.prepare("SELECT DISTINCT cwd FROM turns")?;
+    let cwds: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .filter_map(|r| r.ok())
+        .filter(|c| config::is_excluded(&cfg, c))
+        .collect();
+
+    if cwds.is_empty() {
+        println!("No turns under any excluded path. Nothing to do.");
+        return Ok(());
+    }
+
+    // Count turns per matched cwd for the preview.
+    let mut total = 0usize;
+    let mut rows: Vec<(String, i64)> = Vec::new();
+    for cwd in &cwds {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM turns WHERE cwd = ?1",
+            rusqlite::params![cwd],
+            |row| row.get(0),
+        )?;
+        total += count as usize;
+        rows.push((cwd.clone(), count));
+    }
+    rows.sort_by(|a, b| b.1.cmp(&a.1));
+
+    println!(
+        "{}",
+        format!(
+            "Found {} turn(s) under {} excluded path(s).",
+            total,
+            cwds.len()
+        )
+        .bold()
+    );
+    println!();
+    println!("  {:<6}  {}", "turns".bold(), "cwd".bold());
+    println!("  {}", "─".repeat(70));
+    for (cwd, count) in &rows {
+        println!("  {:<6}  {}", count, cwd);
+    }
+    println!();
+
+    if !yes {
+        println!(
+            "Dry run. Re-run with {} to delete these turns.",
+            "--prune-excluded --yes".cyan()
+        );
+        return Ok(());
+    }
+
+    // Single statement deletion — we already know each cwd matches.
+    let mut deleted = 0usize;
+    for (cwd, _) in &rows {
+        let n = conn.execute(
+            "DELETE FROM turns WHERE cwd = ?1",
+            rusqlite::params![cwd],
+        )?;
+        deleted += n;
+    }
+    println!(
+        "{}",
+        format!("Deleted {} turn(s) under excluded paths.", deleted).green()
     );
     Ok(())
 }

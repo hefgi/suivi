@@ -41,6 +41,7 @@ fn main() {
             args.check,
             args.logs,
             args.fix_outliers,
+            args.prune_excluded,
             args.yes,
         )
         .map_err(|e| e.to_string()),

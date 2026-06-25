@@ -161,7 +161,12 @@ pub struct DoctorArgs {
     #[arg(long)]
     pub fix_outliers: bool,
 
-    /// Confirm destructive actions (currently: --fix-outliers).
+    /// Delete historical turns whose cwd matches any user-configured exclude
+    /// path or built-in default. Without --yes, runs as a dry run.
+    #[arg(long)]
+    pub prune_excluded: bool,
+
+    /// Confirm destructive actions (--fix-outliers, --prune-excluded).
     #[arg(long)]
     pub yes: bool,
 
