@@ -300,6 +300,33 @@ pub fn graph_label_for(since_rfc3339: &str, now: DateTime<Utc>) -> String {
     "custom range".to_string()
 }
 
+/// Label for a graph/section when both `since` and (optional) `until` bounds
+/// are known. When `until` is `None`, delegates to `graph_label_for` so
+/// existing `--today`/`--week`/`--month` labels stay intact. When both are
+/// set, renders `"custom range (YYYY-MM-DD → YYYY-MM-DD)"` using the local
+/// representation; the exclusive upper bound is shown as the previous local
+/// day so the label matches the user's input.
+pub fn range_label_for(
+    since_rfc3339: &str,
+    until_rfc3339: Option<&str>,
+    now: DateTime<Utc>,
+) -> String {
+    let Some(until) = until_rfc3339 else {
+        return graph_label_for(since_rfc3339, now);
+    };
+    let since_local = DateTime::parse_from_rfc3339(since_rfc3339)
+        .ok()
+        .map(|d| d.with_timezone(&chrono::Local).date_naive());
+    let until_local = DateTime::parse_from_rfc3339(until)
+        .ok()
+        .map(|d| d.with_timezone(&chrono::Local).date_naive())
+        .and_then(|d| d.pred_opt());
+    match (since_local, until_local) {
+        (Some(a), Some(b)) => format!("custom range ({} → {})", a, b),
+        _ => "custom range".to_string(),
+    }
+}
+
 /// Format seconds as human-readable duration: "1h 23m" or "45m" or "< 1m"
 pub fn format_duration(secs: f64) -> String {
     if secs < 60.0 {
@@ -578,5 +605,31 @@ mod tests {
     fn test_graph_label_for_unparseable_input() {
         let now = dt("2024-06-19T12:00:00Z");
         assert_eq!(graph_label_for("not-a-date", now), "custom range");
+    }
+
+    #[test]
+    fn test_range_label_for_delegates_when_until_is_none() {
+        let now = dt("2024-06-19T12:00:00Z");
+        let week = (now - Duration::days(7)).to_rfc3339();
+        assert_eq!(range_label_for(&week, None, now), "last 7 days");
+    }
+
+    #[test]
+    fn test_range_label_for_renders_both_dates() {
+        // Build local-midnight RFC3339 strings so the test is independent of
+        // the host timezone. We give since = 2024-06-15 local midnight,
+        // until = 2024-06-22 local midnight (exclusive); display should
+        // show the day before the exclusive bound.
+        let since = local_date_start_rfc3339(
+            chrono::NaiveDate::from_ymd_opt(2024, 6, 15).unwrap(),
+        )
+        .unwrap();
+        let until = local_date_start_rfc3339(
+            chrono::NaiveDate::from_ymd_opt(2024, 6, 22).unwrap(),
+        )
+        .unwrap();
+        let now = dt("2024-06-22T12:00:00Z");
+        let label = range_label_for(&since, Some(&until), now);
+        assert_eq!(label, "custom range (2024-06-15 → 2024-06-21)");
     }
 }

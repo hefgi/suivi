@@ -4,9 +4,14 @@ use std::collections::HashMap;
 
 use crate::{config, db};
 
-use super::{agent_secs, format_duration, graph_label_for, wall_clock_secs};
+use super::{agent_secs, format_duration, range_label_for, wall_clock_secs};
 
-pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result<()> {
+pub fn run(
+    agent_name: &str,
+    since: Option<&str>,
+    until: Option<&str>,
+    has_time_flag: bool,
+) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
     let conn = db::open()?;
     let now = chrono::Utc::now();
@@ -30,7 +35,7 @@ pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result
 
     for (label, win_since) in &windows {
         let turns =
-            db::query_turns(&conn, win_since.as_deref(), None, None, Some(agent_name))?;
+            db::query_turns(&conn, win_since.as_deref(), until, None, Some(agent_name))?;
         let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
         let agent = agent_secs(&turns);
         println!(
@@ -45,7 +50,7 @@ pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result
     // Activity graph — follows the active flag's window when one is set,
     // otherwise defaults to a 30-day rolling view.
     let (graph_label, graph_since) = match (has_time_flag, since) {
-        (true, Some(s)) => (graph_label_for(s, now), Some(s.to_string())),
+        (true, Some(s)) => (range_label_for(s, until, now), Some(s.to_string())),
         (true, None) => ("all time".to_string(), None),
         (false, _) => (
             "last 30 days".to_string(),
@@ -53,7 +58,7 @@ pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result
         ),
     };
     let graph_turns =
-        db::query_turns(&conn, graph_since.as_deref(), None, None, Some(agent_name))?;
+        db::query_turns(&conn, graph_since.as_deref(), until, None, Some(agent_name))?;
     if !graph_turns.is_empty() {
         println!("  {}", format!("Activity ({})", graph_label).bold());
         render_mini_graph(&graph_turns, &cfg);
@@ -61,7 +66,7 @@ pub fn run(agent_name: &str, since: Option<&str>, has_time_flag: bool) -> Result
     }
 
     // Base turns for breakdowns
-    let base_turns = db::query_turns(&conn, since, None, None, Some(agent_name))?;
+    let base_turns = db::query_turns(&conn, since, until, None, Some(agent_name))?;
 
     // Project breakdown
     let mut by_project: HashMap<String, f64> = HashMap::new();

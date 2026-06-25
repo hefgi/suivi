@@ -53,12 +53,13 @@ pub fn turns_to_csv(turns: &[TurnRow]) -> String {
 
 pub fn run(
     since: Option<&str>,
+    until: Option<&str>,
     project: Option<&str>,
     agent_filter: Option<&str>,
     format: &OutputFormat,
 ) -> Result<()> {
     let conn = db::open()?;
-    let turns = db::query_turns(&conn, since, None, project, agent_filter)?;
+    let turns = db::query_turns(&conn, since, until, project, agent_filter)?;
 
     match format {
         OutputFormat::Json => {

@@ -4,9 +4,14 @@ use std::collections::HashMap;
 
 use crate::{config, db};
 
-use super::{agent_secs, format_duration, graph_label_for, wall_clock_secs};
+use super::{agent_secs, format_duration, range_label_for, wall_clock_secs};
 
-pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Result<()> {
+pub fn run(
+    project_name: &str,
+    since: Option<&str>,
+    until: Option<&str>,
+    has_time_flag: bool,
+) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
     let conn = db::open()?;
     let now = chrono::Utc::now();
@@ -34,7 +39,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
 
     for (label, win_since) in &windows {
         let turns =
-            db::query_turns(&conn, win_since.as_deref(), None, matched_path.as_deref(), None)?;
+            db::query_turns(&conn, win_since.as_deref(), until, matched_path.as_deref(), None)?;
         let turns = filter_by_name(&turns, project_name, matched_path.as_deref());
         let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
         let agent = agent_secs(&turns);
@@ -50,7 +55,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
     // Activity graph — follows the active flag's window when one is set,
     // otherwise defaults to a 30-day rolling view.
     let (graph_label, graph_since) = match (has_time_flag, since) {
-        (true, Some(s)) => (graph_label_for(s, now), Some(s.to_string())),
+        (true, Some(s)) => (range_label_for(s, until, now), Some(s.to_string())),
         (true, None) => ("all time".to_string(), None),
         (false, _) => (
             "last 30 days".to_string(),
@@ -60,7 +65,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
     let graph_turns = db::query_turns(
         &conn,
         graph_since.as_deref(),
-        None,
+        until,
         matched_path.as_deref(),
         None,
     )?;
@@ -72,7 +77,7 @@ pub fn run(project_name: &str, since: Option<&str>, has_time_flag: bool) -> Resu
     }
 
     // Agent breakdown
-    let base_turns = db::query_turns(&conn, since, None, matched_path.as_deref(), None)?;
+    let base_turns = db::query_turns(&conn, since, until, matched_path.as_deref(), None)?;
     let base_turns = filter_by_name(&base_turns, project_name, matched_path.as_deref());
 
     let mut by_agent: HashMap<String, f64> = HashMap::new();

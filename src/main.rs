@@ -7,6 +7,7 @@ mod db;
 mod error;
 mod hooks;
 mod logging;
+mod time_range;
 
 use clap::Parser;
 use cli::{Cli, Command, HookEvent};
@@ -58,37 +59,8 @@ fn today_start_rfc3339() -> Option<String> {
     analytics::local_today_start_rfc3339()
 }
 
-/// Resolve --today/--week/--month/--since/--all into an optional RFC3339 lower bound.
-/// Returns Ok(None) for --all (no lower bound) and for the default case —
-/// the default stats view manages its own time windows internally.
-/// An unparseable --since date is an error, not a silent no-op.
-fn resolve_since(args: &cli::StatsArgs) -> Result<Option<String>, anyhow::Error> {
-    let now = chrono::Utc::now();
-    if args.all {
-        return Ok(None);
-    }
-    if let Some(date_str) = &args.since {
-        let date = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").map_err(|_| {
-            anyhow::anyhow!("invalid --since date '{}' (expected YYYY-MM-DD)", date_str)
-        })?;
-        // Interpret the date in the user's timezone, like every other window.
-        return Ok(analytics::local_date_start_rfc3339(date));
-    }
-    if args.today {
-        return Ok(today_start_rfc3339());
-    }
-    if args.week {
-        return Ok(Some((now - chrono::Duration::days(7)).to_rfc3339()));
-    }
-    if args.month {
-        return Ok(Some((now - chrono::Duration::days(30)).to_rfc3339()));
-    }
-    // No time flag — None; callers that need a default window handle it themselves.
-    Ok(None)
-}
-
 fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
-    let since = resolve_since(&args)?;
+    let (since, until) = time_range::resolve_time_range(&args)?;
 
     // Auto-prune retention on every stats run (Gap #9)
     if let Ok(conn) = db::open() {
@@ -102,6 +74,7 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
         return analytics::project_view::run(
             args.project.as_deref().unwrap(),
             since.as_deref(),
+            until.as_deref(),
             has_time_flag,
         );
     }
@@ -117,6 +90,7 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
         return analytics::agent_view::run(
             args.agent.as_deref().unwrap(),
             since.as_deref(),
+            until.as_deref(),
             has_time_flag,
         );
     }
@@ -127,7 +101,11 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
         } else {
             Some((chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339())
         };
-        analytics::projects::run(query_since.as_deref(), args.agent.as_deref())?;
+        analytics::projects::run(
+            query_since.as_deref(),
+            until.as_deref(),
+            args.agent.as_deref(),
+        )?;
     } else if args.history {
         // PRD: --history defaults to today when no time flag is supplied.
         let query_since = if has_time_flag {
@@ -137,6 +115,7 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
         };
         analytics::history::run(
             query_since.as_deref(),
+            until.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
             &args.format,
@@ -149,6 +128,7 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
         };
         analytics::graph::run(
             query_since.as_deref(),
+            until.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
         )?;
@@ -160,6 +140,7 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
         };
         analytics::daily::run(
             query_since.as_deref(),
+            until.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
         )?;
@@ -170,6 +151,7 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
             args.week,
             args.month,
             since.as_deref(),
+            until.as_deref(),
             args.project.as_deref(),
             args.agent.as_deref(),
             &args.format,

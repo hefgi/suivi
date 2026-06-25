@@ -57,9 +57,14 @@ pub fn render(days: &[(String, f64, f64)]) -> String {
     out
 }
 
-pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
+pub fn run(
+    since: Option<&str>,
+    until: Option<&str>,
+    project: Option<&str>,
+    agent_filter: Option<&str>,
+) -> Result<()> {
     let conn = db::open()?;
-    let turns = db::query_turns(&conn, since, None, project, agent_filter)?;
+    let turns = db::query_turns(&conn, since, until, project, agent_filter)?;
     let cfg = config::load().unwrap_or_default();
     let buffer = cfg.tracking.human_buffer_secs;
 

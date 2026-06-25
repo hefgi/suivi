@@ -35,13 +35,14 @@ pub fn summary_to_csv(rows: &[StatsSummaryRow]) -> String {
 fn collect_summary_rows(
     conn: &rusqlite::Connection,
     windows: &[(&str, Option<String>)],
+    until: Option<&str>,
     project: Option<&str>,
     agent_filter: Option<&str>,
     buffer_secs: u32,
 ) -> Result<Vec<StatsSummaryRow>> {
     let mut rows = Vec::with_capacity(windows.len());
     for (label, win_since) in windows {
-        let turns = db::query_turns(conn, win_since.as_deref(), None, project, agent_filter)?;
+        let turns = db::query_turns(conn, win_since.as_deref(), until, project, agent_filter)?;
         let turn_count = turns.iter().filter(|t| t.ended_at.is_some()).count();
         let wall = wall_clock_secs(&turns, buffer_secs);
         let agent = agent_secs(&turns);
@@ -84,6 +85,7 @@ pub fn run(
     week: bool,
     month: bool,
     since: Option<&str>,
+    until: Option<&str>,
     project: Option<&str>,
     agent_filter: Option<&str>,
     format: &OutputFormat,
@@ -158,12 +160,13 @@ pub fn run(
         OutputFormat::Json => {
             // Full turn-level export when --all, summary rows otherwise (Gap #11)
             if all_time {
-                let turns = db::query_turns(&conn, None, None, project, agent_filter)?;
+                let turns = db::query_turns(&conn, None, until, project, agent_filter)?;
                 println!("{}", turns_to_json_full(&turns)?);
             } else {
                 let rows = collect_summary_rows(
                     &conn,
                     &windows,
+                    until,
                     project,
                     agent_filter,
                     cfg.tracking.human_buffer_secs,
@@ -175,6 +178,7 @@ pub fn run(
             let rows = collect_summary_rows(
                 &conn,
                 &windows,
+                until,
                 project,
                 agent_filter,
                 cfg.tracking.human_buffer_secs,
@@ -188,7 +192,7 @@ pub fn run(
 
             for (label, win_since) in &windows {
                 let turns =
-                    db::query_turns(&conn, win_since.as_deref(), None, project, agent_filter)?;
+                    db::query_turns(&conn, win_since.as_deref(), until, project, agent_filter)?;
                 let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
                 let agent = agent_secs(&turns);
 
@@ -203,7 +207,7 @@ pub fn run(
 
             // Top projects — window follows the active flag (today/week/month/since/all).
             let top_turns =
-                db::query_turns(&conn, top_since.as_deref(), None, project, agent_filter)?;
+                db::query_turns(&conn, top_since.as_deref(), until, project, agent_filter)?;
 
             if !top_turns.iter().any(|t| t.ended_at.is_some()) {
                 // No data in this window — skip the sections

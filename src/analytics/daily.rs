@@ -6,10 +6,15 @@ use crate::{config, db};
 
 use super::format_duration;
 
-pub fn run(since: Option<&str>, project: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
+pub fn run(
+    since: Option<&str>,
+    until: Option<&str>,
+    project: Option<&str>,
+    agent_filter: Option<&str>,
+) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
     let conn = db::open()?;
-    let turns = db::query_turns(&conn, since, None, project, agent_filter)?;
+    let turns = db::query_turns(&conn, since, until, project, agent_filter)?;
 
     let mut by_day: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, turn) in turns.iter().enumerate() {

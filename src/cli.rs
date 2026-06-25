@@ -71,6 +71,15 @@ pub struct StatsArgs {
     #[arg(long, value_name = "DATE")]
     pub since: Option<String>,
 
+    /// Show stats up to (and including) this date (YYYY-MM-DD). Requires --since.
+    #[arg(
+        long,
+        value_name = "DATE",
+        requires = "since",
+        conflicts_with_all = ["today", "week", "month", "all"],
+    )]
+    pub until: Option<String>,
+
     /// Filter by project name or path
     #[arg(long)]
     pub project: Option<String>,
