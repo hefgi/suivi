@@ -66,9 +66,17 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), anyhow::Error> {
     let (since, until) = time_range::resolve_time_range(&args)?;
 
     // Auto-prune retention on every stats run (Gap #9)
+    // Auto-clamp outliers too: the write-time clamp catches new turns, but
+    // historical bad data (or anything that slipped through) would otherwise
+    // skew every query until the user remembered to run doctor. Silent.
     if let Ok(conn) = db::open() {
-        let retention = config::load().unwrap_or_default().tracking.retention_days;
-        let _ = db::delete_beyond_retention(&conn, retention);
+        let cfg = config::load().unwrap_or_default();
+        let _ = db::delete_beyond_retention(&conn, cfg.tracking.retention_days);
+        let _ = db::clamp_outliers(
+            &conn,
+            cfg.tracking.max_turn_secs as f64,
+            cfg.tracking.human_buffer_secs as f64,
+        );
     }
     let has_time_flag = args.all || args.today || args.week || args.month || args.since.is_some();
 
