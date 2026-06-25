@@ -56,7 +56,8 @@ fn run() -> Result<(), anyhow::Error> {
 
     let now = Utc::now();
     let raw = agent_duration(duration_ms, &open_turn.started_at, now);
-    let agent_duration_secs = if raw > max_turn_secs {
+    let clamped = raw > max_turn_secs;
+    let agent_duration_secs = if clamped {
         warn!(
             session_id = %session_id,
             raw_secs = raw,
@@ -68,7 +69,24 @@ fn run() -> Result<(), anyhow::Error> {
         raw
     };
     let effective_duration_secs = buffer_secs + agent_duration_secs + buffer_secs;
-    let ended_at = now.to_rfc3339();
+    // When the raw duration is implausible, `now` is too (the Stop hook
+    // fired hours after the prompt was actually answered — laptop sleep,
+    // tab switch, etc.). Anchor `ended_at` to `started_at + clamped duration`
+    // so the wall window matches the clamped agent time. Otherwise stats
+    // would credit hours of idle wall-clock to whatever project the turn
+    // started in — which is exactly the bug fixed retroactively by
+    // `suivi doctor --fix-outliers`.
+    let ended_at = if clamped {
+        chrono::DateTime::parse_from_rfc3339(&open_turn.started_at)
+            .ok()
+            .map(|s| {
+                (s.with_timezone(&Utc) + chrono::Duration::seconds(agent_duration_secs as i64))
+                    .to_rfc3339()
+            })
+            .unwrap_or_else(|| now.to_rfc3339())
+    } else {
+        now.to_rfc3339()
+    };
     db::stop_turn(
         &conn,
         open_turn.id,
