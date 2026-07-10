@@ -1,3 +1,4 @@
+use crate::agents::claude_code::transcript;
 use crate::{config, db};
 use chrono::{DateTime, Utc};
 use std::io::Read;
@@ -55,37 +56,67 @@ fn run() -> Result<(), anyhow::Error> {
     };
 
     let now = Utc::now();
-    let raw = agent_duration(duration_ms, &open_turn.started_at, now);
-    let clamped = raw > max_turn_secs;
-    let agent_duration_secs = if clamped {
-        warn!(
-            session_id = %session_id,
-            raw_secs = raw,
-            cap_secs = max_turn_secs,
-            "agent_duration_secs exceeds max_turn_secs; clamping",
-        );
-        max_turn_secs
+    let gap_threshold = config.tracking.transcript_gap_threshold_secs;
+    let started_dt = DateTime::parse_from_rfc3339(&open_turn.started_at)
+        .ok()
+        .map(|d| d.with_timezone(&Utc));
+
+    // For Claude Code turns, the JSONL transcript has a per-event timestamp
+    // stream — we can find the real ended_at by walking forward from
+    // started_at and truncating at the first gap larger than the threshold.
+    // This replaces the cap-based clamping (which was fabricating hours of
+    // phantom activity for suspended sessions). Other agents don't emit
+    // transcripts; they fall through to `fallback_ended_at` (cap logic).
+    let (ended_at, agent_duration_secs, skip_buffer) =
+        match (transcript_path, started_dt) {
+            (Some(path), Some(started)) => {
+                match transcript::last_activity_ended_at(
+                    std::path::Path::new(path),
+                    started,
+                    None, // no next-turn bound at write time
+                    gap_threshold,
+                ) {
+                    Some(real_end) => {
+                        let secs = ((real_end - started).num_milliseconds() as f64 / 1000.0)
+                            .max(0.0);
+                        // Signal-less turn (no in-window activity events):
+                        // record zero duration and skip the human buffer.
+                        let skip = secs == 0.0;
+                        (real_end.to_rfc3339(), secs, skip)
+                    }
+                    None => {
+                        // Transcript unreadable — cap-based fallback.
+                        debug!(
+                            transcript_path = path,
+                            "transcript unreadable; using cap-based fallback for ended_at",
+                        );
+                        let (e, s) = fallback_ended_at(
+                            &open_turn.started_at,
+                            duration_ms,
+                            now,
+                            max_turn_secs,
+                            &session_id,
+                        );
+                        (e, s, false)
+                    }
+                }
+            }
+            _ => {
+                // No transcript (non-Claude-Code agent, or unparseable started_at).
+                let (e, s) = fallback_ended_at(
+                    &open_turn.started_at,
+                    duration_ms,
+                    now,
+                    max_turn_secs,
+                    &session_id,
+                );
+                (e, s, false)
+            }
+        };
+    let effective_duration_secs = if skip_buffer {
+        0.0
     } else {
-        raw
-    };
-    let effective_duration_secs = buffer_secs + agent_duration_secs + buffer_secs;
-    // When the raw duration is implausible, `now` is too (the Stop hook
-    // fired hours after the prompt was actually answered — laptop sleep,
-    // tab switch, etc.). Anchor `ended_at` to `started_at + clamped duration`
-    // so the wall window matches the clamped agent time. Otherwise stats
-    // would credit hours of idle wall-clock to whatever project the turn
-    // started in — which is exactly the bug fixed retroactively by
-    // `suivi doctor --fix-outliers`.
-    let ended_at = if clamped {
-        chrono::DateTime::parse_from_rfc3339(&open_turn.started_at)
-            .ok()
-            .map(|s| {
-                (s.with_timezone(&Utc) + chrono::Duration::seconds(agent_duration_secs as i64))
-                    .to_rfc3339()
-            })
-            .unwrap_or_else(|| now.to_rfc3339())
-    } else {
-        now.to_rfc3339()
+        buffer_secs + agent_duration_secs + buffer_secs
     };
     db::stop_turn(
         &conn,
@@ -125,6 +156,48 @@ fn run() -> Result<(), anyhow::Error> {
     }
 
     Ok(())
+}
+
+/// Cap-based `ended_at` used when we have no transcript signal — either
+/// the agent doesn't emit a transcript (Codex/Pi/OpenCode), or Claude
+/// Code's transcript was unreadable. Returns `(ended_at RFC3339,
+/// agent_duration_secs)`. When the raw duration exceeds `max_turn_secs`,
+/// both fields are clamped: duration to the cap, ended_at to
+/// `started_at + cap` so wall-clock stops crediting phantom idle time to
+/// whatever project the turn started in.
+fn fallback_ended_at(
+    started_at: &str,
+    duration_ms: Option<f64>,
+    now: DateTime<Utc>,
+    max_turn_secs: f64,
+    session_id: &str,
+) -> (String, f64) {
+    let raw = agent_duration(duration_ms, started_at, now);
+    let clamped = raw > max_turn_secs;
+    let agent_duration_secs = if clamped {
+        warn!(
+            session_id = %session_id,
+            raw_secs = raw,
+            cap_secs = max_turn_secs,
+            "agent_duration_secs exceeds max_turn_secs; clamping",
+        );
+        max_turn_secs
+    } else {
+        raw
+    };
+    let ended_at = if clamped {
+        DateTime::parse_from_rfc3339(started_at)
+            .ok()
+            .map(|s| {
+                (s.with_timezone(&Utc)
+                    + chrono::Duration::seconds(agent_duration_secs as i64))
+                .to_rfc3339()
+            })
+            .unwrap_or_else(|| now.to_rfc3339())
+    } else {
+        now.to_rfc3339()
+    };
+    (ended_at, agent_duration_secs)
 }
 
 /// Agent thinking time for a closing turn. No supported agent actually sends
@@ -260,5 +333,55 @@ mod tests {
     fn test_agent_duration_unparseable_started_at() {
         let d = agent_duration(None, "garbage", utc("2024-01-01T10:00:00Z"));
         assert_eq!(d, 0.0);
+    }
+
+    #[test]
+    fn test_fallback_ended_at_under_cap_uses_now() {
+        // Turn took 60s, cap is 7200s → no clamping, ended_at = now.
+        let now = utc("2024-01-01T10:01:00Z");
+        let (ended, secs) = fallback_ended_at(
+            "2024-01-01T10:00:00Z",
+            Some(60_000.0),
+            now,
+            7200.0,
+            "sess",
+        );
+        assert_eq!(secs, 60.0);
+        // ended_at should equal now.
+        assert_eq!(ended, now.to_rfc3339());
+    }
+
+    #[test]
+    fn test_fallback_ended_at_over_cap_clamps_both_duration_and_end() {
+        // Raw = 10h, cap = 2h → duration clamped to 7200, ended_at set
+        // to started_at + 7200s (NOT now).
+        let now = utc("2024-01-01T20:00:00Z");
+        let (ended, secs) = fallback_ended_at(
+            "2024-01-01T10:00:00Z",
+            Some(36_000_000.0), // 10h in ms
+            now,
+            7200.0,
+            "sess",
+        );
+        assert_eq!(secs, 7200.0);
+        // ended_at should be started_at + 2h = 12:00:00Z.
+        let ended_dt = chrono::DateTime::parse_from_rfc3339(&ended)
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(ended_dt, utc("2024-01-01T12:00:00Z"));
+    }
+
+    #[test]
+    fn test_fallback_ended_at_no_duration_ms_falls_back_to_wall() {
+        // No duration_ms → derived from `now - started_at` = 3h → clamps at 2h.
+        let now = utc("2024-01-01T13:00:00Z");
+        let (_ended, secs) = fallback_ended_at(
+            "2024-01-01T10:00:00Z",
+            None,
+            now,
+            7200.0,
+            "sess",
+        );
+        assert_eq!(secs, 7200.0);
     }
 }

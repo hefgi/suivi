@@ -26,9 +26,16 @@ pub struct Tracking {
     /// the turn started, which can balloon to days when a session is
     /// suspended/resumed across a sleep or network drop). Values above this
     /// are clamped at write time; `suivi doctor --fix-outliers` clamps
-    /// existing rows.
+    /// existing rows. Claude Code turns use the transcript-derived duration
+    /// instead — this cap is a fallback for other agents only.
     #[serde(default = "default_max_turn_secs")]
     pub max_turn_secs: u32,
+    /// Inter-event gap in a Claude Code transcript that separates continuous
+    /// live work from a suspension (laptop sleep, walk-away). Any gap larger
+    /// than this truncates the turn at the last event before the gap.
+    /// See `src/agents/claude_code/transcript.rs`.
+    #[serde(default = "default_transcript_gap_threshold_secs")]
+    pub transcript_gap_threshold_secs: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +94,9 @@ fn default_retention_days() -> u32 {
 fn default_max_turn_secs() -> u32 {
     7200
 }
+fn default_transcript_gap_threshold_secs() -> u32 {
+    300
+}
 
 impl Default for Config {
     fn default() -> Self {
@@ -95,6 +105,7 @@ impl Default for Config {
                 human_buffer_secs: default_human_buffer_secs(),
                 retention_days: default_retention_days(),
                 max_turn_secs: default_max_turn_secs(),
+                transcript_gap_threshold_secs: default_transcript_gap_threshold_secs(),
             },
             projects: vec![],
             exclude: vec![],
@@ -134,6 +145,7 @@ impl From<ConfigV0> for Config {
                 human_buffer_secs: v0.buffer_mins * 60,
                 retention_days: v0.retention_days,
                 max_turn_secs: default_max_turn_secs(),
+                transcript_gap_threshold_secs: default_transcript_gap_threshold_secs(),
             },
             projects: v0
                 .projects
@@ -339,6 +351,7 @@ mod tests {
                 human_buffer_secs: 600,
                 retention_days: 180,
                 max_turn_secs: 7200,
+                transcript_gap_threshold_secs: 300,
             },
             projects: vec![ProjectEntry {
                 path: "/home/user/project".to_string(),
