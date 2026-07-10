@@ -161,12 +161,20 @@ pub struct DoctorArgs {
     #[arg(long)]
     pub fix_outliers: bool,
 
+    /// Recompute ended_at for historical Claude Code turns by scanning
+    /// their JSONL transcripts. Reclaims phantom idle time recorded when
+    /// sessions were suspended (laptop sleep, walk-away). Without --yes,
+    /// runs as a dry run.
+    #[arg(long)]
+    pub fix_from_transcripts: bool,
+
     /// Delete historical turns whose cwd matches any user-configured exclude
     /// path or built-in default. Without --yes, runs as a dry run.
     #[arg(long)]
     pub prune_excluded: bool,
 
-    /// Confirm destructive actions (--fix-outliers, --prune-excluded).
+    /// Confirm destructive actions (--fix-outliers, --fix-from-transcripts,
+    /// --prune-excluded).
     #[arg(long)]
     pub yes: bool,
 

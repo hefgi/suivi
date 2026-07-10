@@ -307,6 +307,88 @@ pub fn set_model(conn: &Connection, id: i64, model: &str) -> Result<(), SuiviErr
     Ok(())
 }
 
+/// Candidate for `suivi doctor --fix-from-transcripts`. Fields needed to
+/// locate the transcript, bound the walk, and plan the UPDATE.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct FixCandidate {
+    pub id: i64,
+    pub session_id: String,
+    pub cwd: String,
+    pub started_at: String,
+    pub ended_at: String,
+    pub agent_duration_secs: f64,
+    /// Next turn's `started_at` on the same session, if any. Used as an
+    /// exclusive upper bound so a corrected `ended_at` can't overlap the
+    /// next turn.
+    pub next_start: Option<String>,
+}
+
+/// Find Claude Code turns whose duration or wall window suggests a
+/// suspension-induced phantom `ended_at`. Uses `>=` on `agent_duration_secs`
+/// so already-clamped rows (equal to the cap) are picked up.
+pub fn find_transcript_fix_candidates(
+    conn: &Connection,
+    cap_secs: f64,
+) -> Result<Vec<FixCandidate>, SuiviError> {
+    let mut stmt = conn.prepare(
+        "WITH scoped AS (
+           SELECT id, session_id, cwd, started_at, ended_at, agent_duration_secs,
+                  LEAD(started_at) OVER (PARTITION BY session_id ORDER BY started_at) AS next_start
+           FROM turns
+           WHERE agent = 'claude-code' AND ended_at IS NOT NULL
+         )
+         SELECT id, session_id, cwd, started_at, ended_at, agent_duration_secs, next_start
+         FROM scoped
+         WHERE agent_duration_secs >= ?1
+            OR (julianday(ended_at) - julianday(started_at)) * 86400.0 > ?1 + 1.0
+         ORDER BY (julianday(ended_at) - julianday(started_at)) * 86400.0 DESC,
+                  agent_duration_secs DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![cap_secs], |row| {
+            Ok(FixCandidate {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                cwd: row.get(2)?,
+                started_at: row.get(3)?,
+                ended_at: row.get(4)?,
+                agent_duration_secs: row.get(5)?,
+                next_start: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Retroactive UPDATE of `ended_at` and `agent_duration_secs`. Mirrors
+/// `set_model` in shape. `effective_duration_secs` is recomputed:
+///   - if `agent_duration_secs == 0`, effective is 0 (signal-less turn,
+///     no human buffer credit — matches the write-time semantics)
+///   - otherwise effective = `2 * buffer_secs + agent_duration_secs`
+pub fn set_ended_at_and_duration(
+    conn: &Connection,
+    id: i64,
+    ended_at: &str,
+    agent_duration_secs: f64,
+    buffer_secs: f64,
+) -> Result<(), SuiviError> {
+    let effective = if agent_duration_secs == 0.0 {
+        0.0
+    } else {
+        2.0 * buffer_secs + agent_duration_secs
+    };
+    conn.execute(
+        "UPDATE turns
+         SET ended_at = ?1,
+             agent_duration_secs = ?2,
+             effective_duration_secs = ?3
+         WHERE id = ?4",
+        params![ended_at, agent_duration_secs, effective, id],
+    )?;
+    Ok(())
+}
+
 /// Turns with `project_name IS NULL` whose `cwd` is exactly `prefix` or
 /// nested under `prefix/`. Used by `suivi track` to find candidate turns
 /// for backfill; the caller routes each result through `config::find_project`
@@ -1016,5 +1098,156 @@ mod tests {
         assert_eq!(big.effective_duration_secs, Some(2.0 * 300.0 + 7200.0));
         let ok = rows.iter().find(|r| r.session_id == "ok1").unwrap();
         assert_eq!(ok.agent_duration_secs, Some(60.0));
+    }
+
+    fn insert_full_turn(
+        conn: &Connection,
+        session: &str,
+        agent: &str,
+        started: &str,
+        ended: &str,
+        agent_secs: f64,
+    ) -> i64 {
+        let id = insert_turn(
+            conn,
+            &TurnInsert {
+                session_id: session,
+                started_at: started,
+                cwd: "/tmp",
+                agent,
+                model: None,
+                project_path: None,
+                project_name: None,
+            },
+        )
+        .unwrap();
+        stop_turn(
+            conn,
+            id,
+            &TurnStop {
+                ended_at: ended.to_string(),
+                agent_duration_secs: agent_secs,
+                effective_duration_secs: agent_secs + 600.0,
+            },
+        )
+        .unwrap();
+        id
+    }
+
+    #[test]
+    fn test_find_transcript_fix_candidates_scopes_to_claude_code() {
+        // Non-Claude-Code turns must NOT appear even if they exceed cap.
+        let (conn, _dir) = test_conn();
+        insert_full_turn(
+            &conn,
+            "cc-clamped",
+            "claude-code",
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T12:00:00Z",
+            7200.0,
+        );
+        insert_full_turn(
+            &conn,
+            "codex-clamped",
+            "codex",
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T12:00:00Z",
+            7200.0,
+        );
+
+        let candidates = find_transcript_fix_candidates(&conn, 7200.0).unwrap();
+        let sessions: Vec<&str> = candidates.iter().map(|c| c.session_id.as_str()).collect();
+        assert_eq!(sessions, vec!["cc-clamped"]);
+    }
+
+    #[test]
+    fn test_find_transcript_fix_candidates_populates_next_start() {
+        // Two turns on the same session; the first's next_start should be
+        // the second's started_at.
+        let (conn, _dir) = test_conn();
+        insert_full_turn(
+            &conn,
+            "s",
+            "claude-code",
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T12:00:00Z",
+            7200.0,
+        );
+        insert_full_turn(
+            &conn,
+            "s",
+            "claude-code",
+            "2024-01-01T14:00:00Z",
+            "2024-01-01T14:05:00Z",
+            300.0,
+        );
+
+        let candidates = find_transcript_fix_candidates(&conn, 7200.0).unwrap();
+        // Only the first (clamped) is a candidate; the second is under cap.
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].next_start.as_deref(), Some("2024-01-01T14:00:00Z"));
+    }
+
+    #[test]
+    fn test_find_transcript_fix_candidates_matches_by_wall_window() {
+        // Row with agent_duration LESS than cap but wall window over cap
+        // (agent = 60s but ended_at is 4h after started_at) should still
+        // be flagged as a candidate.
+        let (conn, _dir) = test_conn();
+        insert_full_turn(
+            &conn,
+            "wall-bloat",
+            "claude-code",
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T14:00:00Z",
+            60.0,
+        );
+
+        let candidates = find_transcript_fix_candidates(&conn, 7200.0).unwrap();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].session_id, "wall-bloat");
+    }
+
+    #[test]
+    fn test_set_ended_at_and_duration_recomputes_effective() {
+        let (conn, _dir) = test_conn();
+        let id = insert_full_turn(
+            &conn,
+            "s",
+            "claude-code",
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T12:00:00Z",
+            7200.0,
+        );
+
+        // Correct to 60s, buffer 300 → effective = 660.
+        set_ended_at_and_duration(&conn, id, "2024-01-01T10:01:00Z", 60.0, 300.0).unwrap();
+
+        let rows = query_turns(&conn, None, None, None, None).unwrap();
+        let r = rows.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(r.agent_duration_secs, Some(60.0));
+        assert_eq!(r.effective_duration_secs, Some(660.0));
+        assert_eq!(r.ended_at.as_deref(), Some("2024-01-01T10:01:00Z"));
+    }
+
+    #[test]
+    fn test_set_ended_at_and_duration_zero_skips_buffer() {
+        // Signal-less turn: agent = 0 → effective = 0 (not 2*buffer).
+        let (conn, _dir) = test_conn();
+        let id = insert_full_turn(
+            &conn,
+            "s",
+            "claude-code",
+            "2024-01-01T10:00:00Z",
+            "2024-01-01T12:00:00Z",
+            7200.0,
+        );
+
+        set_ended_at_and_duration(&conn, id, "2024-01-01T10:00:00Z", 0.0, 300.0).unwrap();
+
+        let rows = query_turns(&conn, None, None, None, None).unwrap();
+        let r = rows.iter().find(|r| r.id == id).unwrap();
+        assert_eq!(r.agent_duration_secs, Some(0.0));
+        assert_eq!(r.effective_duration_secs, Some(0.0));
     }
 }

@@ -1,6 +1,8 @@
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use colored::Colorize;
 
+use crate::agents::claude_code::transcript;
 use crate::{config, db, logging};
 
 pub fn run(
@@ -8,6 +10,7 @@ pub fn run(
     check: bool,
     logs: Option<usize>,
     fix_outliers: bool,
+    fix_from_transcripts: bool,
     prune_excluded: bool,
     yes: bool,
 ) -> Result<()> {
@@ -17,6 +20,10 @@ pub fn run(
 
     if fix_outliers {
         return run_fix_outliers(yes);
+    }
+
+    if fix_from_transcripts {
+        return run_fix_from_transcripts(yes);
     }
 
     if prune_excluded {
@@ -149,6 +156,170 @@ fn run_fix_outliers(yes: bool) -> Result<()> {
         .green()
     );
     Ok(())
+}
+
+/// Result of planning a single row's transcript-based correction.
+struct FixPlan {
+    id: i64,
+    started_local: String,
+    cur_end_local: String,
+    new_end_utc: DateTime<Utc>,
+    new_secs: f64,
+    saved_secs: f64,
+}
+
+fn run_fix_from_transcripts(yes: bool) -> Result<()> {
+    let cfg = config::load().unwrap_or_default();
+    let cap = cfg.tracking.max_turn_secs as f64;
+    let buffer = cfg.tracking.human_buffer_secs as f64;
+    let gap = cfg.tracking.transcript_gap_threshold_secs;
+    let conn = db::open()?;
+
+    let candidates = db::find_transcript_fix_candidates(&conn, cap)?;
+    if candidates.is_empty() {
+        println!("No transcript-fixable candidates. Nothing to do.");
+        return Ok(());
+    }
+
+    let mut planned: Vec<FixPlan> = Vec::new();
+    let mut skipped_no_transcript = 0usize;
+    let mut skipped_no_savings = 0usize;
+    let mut skipped_unparseable = 0usize;
+
+    for c in &candidates {
+        let Ok(started) = DateTime::parse_from_rfc3339(&c.started_at) else {
+            skipped_unparseable += 1;
+            continue;
+        };
+        let started = started.with_timezone(&Utc);
+        let bound = c
+            .next_start
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&Utc));
+
+        let path = match transcript::locate_transcript(&c.session_id, &c.cwd) {
+            Some(p) => p,
+            None => {
+                skipped_no_transcript += 1;
+                continue;
+            }
+        };
+        let new_end = match transcript::last_activity_ended_at(&path, started, bound, gap) {
+            Some(e) => e,
+            None => {
+                skipped_no_transcript += 1;
+                continue;
+            }
+        };
+        let new_secs = ((new_end - started).num_milliseconds() as f64 / 1000.0).max(0.0);
+        // Only rewrite if this shrinks the recorded duration. Otherwise
+        // the row is already accurate or the transcript is longer than
+        // what we stored (rare — leave alone).
+        if new_secs >= c.agent_duration_secs {
+            skipped_no_savings += 1;
+            continue;
+        }
+        let saved = c.agent_duration_secs - new_secs;
+        let cur_end_local = to_local_short(&c.ended_at);
+        planned.push(FixPlan {
+            id: c.id,
+            started_local: to_local_short(&c.started_at),
+            cur_end_local,
+            new_end_utc: new_end,
+            new_secs,
+            saved_secs: saved,
+        });
+    }
+
+    println!(
+        "{}",
+        format!(
+            "Found {} candidate turn(s) with clamped or bloated ended_at.",
+            candidates.len()
+        )
+        .bold()
+    );
+    println!(
+        "  Planned corrections: {}   Skipped (no transcript): {}   Skipped (already accurate): {}   Skipped (unparseable): {}",
+        planned.len(),
+        skipped_no_transcript,
+        skipped_no_savings,
+        skipped_unparseable
+    );
+    println!();
+
+    if !planned.is_empty() {
+        println!(
+            "  {:<6}  {:<20}  {:<20}  {:>10}  {:>10}",
+            "id".bold(),
+            "started (local)".bold(),
+            "current end".bold(),
+            "new dur".bold(),
+            "saved".bold(),
+        );
+        println!("  {}", "─".repeat(78));
+        for p in &planned {
+            println!(
+                "  {:<6}  {:<20}  {:<20}  {:>10}  {:>10}",
+                p.id,
+                p.started_local,
+                p.cur_end_local,
+                format_secs(p.new_secs),
+                format_secs(p.saved_secs),
+            );
+        }
+        let total_saved: f64 = planned.iter().map(|p| p.saved_secs).sum();
+        println!();
+        println!(
+            "{}",
+            format!("Total phantom time reclaimable: {}", format_secs(total_saved)).bold()
+        );
+        println!();
+    }
+
+    if !yes {
+        println!(
+            "Dry run. Re-run with {} to apply.",
+            "--fix-from-transcripts --yes".cyan()
+        );
+        return Ok(());
+    }
+
+    let mut applied = 0usize;
+    for p in &planned {
+        db::set_ended_at_and_duration(
+            &conn,
+            p.id,
+            &p.new_end_utc.to_rfc3339(),
+            p.new_secs,
+            buffer,
+        )?;
+        applied += 1;
+    }
+    let total_saved: f64 = planned.iter().map(|p| p.saved_secs).sum();
+    println!(
+        "{}",
+        format!(
+            "Corrected {} turn(s); reclaimed {}.",
+            applied,
+            format_secs(total_saved)
+        )
+        .green()
+    );
+    Ok(())
+}
+
+/// Render an RFC3339 UTC timestamp as a local `MM-DD HH:MM` string for the
+/// dry-run table. Best-effort — returns the raw prefix on parse failure.
+fn to_local_short(rfc3339: &str) -> String {
+    match DateTime::parse_from_rfc3339(rfc3339) {
+        Ok(d) => d
+            .with_timezone(&chrono::Local)
+            .format("%m-%d %H:%M")
+            .to_string(),
+        Err(_) => rfc3339.chars().take(16).collect(),
+    }
 }
 
 fn run_prune_excluded(yes: bool) -> Result<()> {

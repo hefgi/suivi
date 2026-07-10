@@ -41,6 +41,7 @@ fn main() {
             args.check,
             args.logs,
             args.fix_outliers,
+            args.fix_from_transcripts,
             args.prune_excluded,
             args.yes,
         )
