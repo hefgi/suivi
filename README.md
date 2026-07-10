@@ -84,6 +84,9 @@ suivi status
 suivi doctor             # show stale turn counts
 suivi doctor --prune     # delete stale turns and expired turns
 suivi doctor --check     # SQLite integrity check
+suivi doctor --fix-from-transcripts  # correct ended_at from Claude Code
+                                     # transcripts (reclaims phantom time
+                                     # from suspended/idle sessions)
 
 # Remove suivi's hooks from all agent configs
 suivi uninstall          # keeps your config and database
