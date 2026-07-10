@@ -1,6 +1,8 @@
 use crate::agents::{Agent, AgentPayload, Env, HookDest, HookFile, HookTemplates};
 use std::path::PathBuf;
 
+pub mod transcript;
+
 pub struct ClaudeCodeAgent;
 
 impl Agent for ClaudeCodeAgent {
