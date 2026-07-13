@@ -168,7 +168,9 @@ pub fn turn_day_contribution<Tz: TimeZone>(
     let start = DateTime::parse_from_rfc3339(&turn.started_at)
         .ok()?
         .with_timezone(&Utc);
-    let end = DateTime::parse_from_rfc3339(ended).ok()?.with_timezone(&Utc);
+    let end = DateTime::parse_from_rfc3339(ended)
+        .ok()?
+        .with_timezone(&Utc);
     if end < start {
         return None;
     }
@@ -622,14 +624,10 @@ mod tests {
         // the host timezone. We give since = 2024-06-15 local midnight,
         // until = 2024-06-22 local midnight (exclusive); display should
         // show the day before the exclusive bound.
-        let since = local_date_start_rfc3339(
-            chrono::NaiveDate::from_ymd_opt(2024, 6, 15).unwrap(),
-        )
-        .unwrap();
-        let until = local_date_start_rfc3339(
-            chrono::NaiveDate::from_ymd_opt(2024, 6, 22).unwrap(),
-        )
-        .unwrap();
+        let since = local_date_start_rfc3339(chrono::NaiveDate::from_ymd_opt(2024, 6, 15).unwrap())
+            .unwrap();
+        let until = local_date_start_rfc3339(chrono::NaiveDate::from_ymd_opt(2024, 6, 22).unwrap())
+            .unwrap();
         let now = dt("2024-06-22T12:00:00Z");
         let label = range_label_for(&since, Some(&until), now);
         assert_eq!(label, "custom range (2024-06-15 → 2024-06-21)");

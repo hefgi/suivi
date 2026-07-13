@@ -235,10 +235,8 @@ mod tests {
 
     #[test]
     fn test_untrack_errors_on_ambiguous_name() {
-        let (_d, conn, cfg_path) = fresh_with(vec![
-            ("/code/a", Some("Dup")),
-            ("/code/b", Some("Dup")),
-        ]);
+        let (_d, conn, cfg_path) =
+            fresh_with(vec![("/code/a", Some("Dup")), ("/code/b", Some("Dup"))]);
         let err = run_with(&args("Dup", true), &conn, &cfg_path, &always_yes).unwrap_err();
         assert!(err.to_string().contains("ambiguous name"));
     }

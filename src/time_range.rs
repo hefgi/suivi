@@ -47,8 +47,7 @@ pub fn resolve_time_range(
                     ));
                 }
                 // Inclusive intent → exclusive SQL bound at the next local midnight.
-                to.succ_opt()
-                    .and_then(analytics::local_date_start_rfc3339)
+                to.succ_opt().and_then(analytics::local_date_start_rfc3339)
             }
         };
         return Ok((since_rfc, until_rfc));
@@ -157,11 +156,7 @@ mod tests {
         a.since = Some("2026-06-21".to_string());
         a.until = Some("2026-06-15".to_string());
         let err = resolve_time_range(&a).unwrap_err();
-        assert!(
-            err.to_string().contains("before --since"),
-            "got: {}",
-            err
-        );
+        assert!(err.to_string().contains("before --since"), "got: {}", err);
     }
 
     #[test]

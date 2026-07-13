@@ -108,11 +108,7 @@ pub fn locate_transcript(session_id: &str, cwd: &str) -> Option<PathBuf> {
 /// Falls back to scanning `projects_root/*/{session_id}.jsonl` if the
 /// primary slug misses — covers slug edge cases (worktrees, unusual
 /// characters, future Claude Code slug rule changes).
-pub fn locate_transcript_in(
-    projects_root: &Path,
-    session_id: &str,
-    cwd: &str,
-) -> Option<PathBuf> {
+pub fn locate_transcript_in(projects_root: &Path, session_id: &str, cwd: &str) -> Option<PathBuf> {
     let slug = cwd.replace('/', "-");
     let primary = projects_root
         .join(&slug)

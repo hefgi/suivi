@@ -45,8 +45,8 @@ pub fn run_with(args: &TrackArgs, conn: &Connection, config_path: &Path) -> Resu
             config_path.display()
         ));
     }
-    let abs = std::fs::canonicalize(&raw)
-        .map_err(|_| anyhow!("no such directory: {}", args.path))?;
+    let abs =
+        std::fs::canonicalize(&raw).map_err(|_| anyhow!("no such directory: {}", args.path))?;
     if !abs.is_dir() {
         return Err(anyhow!("not a directory: {}", abs.display()));
     }
@@ -303,12 +303,7 @@ mod tests {
         insert_turn_at(&conn, "under-already", &abs_str, Some("Existing"));
         insert_turn_at(&conn, "outside", "/some/other/dir", None);
 
-        let outcome = run_with(
-            &args(&abs_str, Some("Limes"), false),
-            &conn,
-            &cfg_path,
-        )
-        .unwrap();
+        let outcome = run_with(&args(&abs_str, Some("Limes"), false), &conn, &cfg_path).unwrap();
         let b = outcome.backfilled.expect("backfill should have run");
         assert_eq!(b.count, 2, "only the two null-named under-path turns");
 

@@ -67,52 +67,50 @@ fn run() -> Result<(), anyhow::Error> {
     // This replaces the cap-based clamping (which was fabricating hours of
     // phantom activity for suspended sessions). Other agents don't emit
     // transcripts; they fall through to `fallback_ended_at` (cap logic).
-    let (ended_at, agent_duration_secs, skip_buffer) =
-        match (transcript_path, started_dt) {
-            (Some(path), Some(started)) => {
-                match transcript::last_activity_ended_at(
-                    std::path::Path::new(path),
-                    started,
-                    None, // no next-turn bound at write time
-                    gap_threshold,
-                ) {
-                    Some(real_end) => {
-                        let secs = ((real_end - started).num_milliseconds() as f64 / 1000.0)
-                            .max(0.0);
-                        // Signal-less turn (no in-window activity events):
-                        // record zero duration and skip the human buffer.
-                        let skip = secs == 0.0;
-                        (real_end.to_rfc3339(), secs, skip)
-                    }
-                    None => {
-                        // Transcript unreadable — cap-based fallback.
-                        debug!(
-                            transcript_path = path,
-                            "transcript unreadable; using cap-based fallback for ended_at",
-                        );
-                        let (e, s) = fallback_ended_at(
-                            &open_turn.started_at,
-                            duration_ms,
-                            now,
-                            max_turn_secs,
-                            &session_id,
-                        );
-                        (e, s, false)
-                    }
+    let (ended_at, agent_duration_secs, skip_buffer) = match (transcript_path, started_dt) {
+        (Some(path), Some(started)) => {
+            match transcript::last_activity_ended_at(
+                std::path::Path::new(path),
+                started,
+                None, // no next-turn bound at write time
+                gap_threshold,
+            ) {
+                Some(real_end) => {
+                    let secs = ((real_end - started).num_milliseconds() as f64 / 1000.0).max(0.0);
+                    // Signal-less turn (no in-window activity events):
+                    // record zero duration and skip the human buffer.
+                    let skip = secs == 0.0;
+                    (real_end.to_rfc3339(), secs, skip)
+                }
+                None => {
+                    // Transcript unreadable — cap-based fallback.
+                    debug!(
+                        transcript_path = path,
+                        "transcript unreadable; using cap-based fallback for ended_at",
+                    );
+                    let (e, s) = fallback_ended_at(
+                        &open_turn.started_at,
+                        duration_ms,
+                        now,
+                        max_turn_secs,
+                        &session_id,
+                    );
+                    (e, s, false)
                 }
             }
-            _ => {
-                // No transcript (non-Claude-Code agent, or unparseable started_at).
-                let (e, s) = fallback_ended_at(
-                    &open_turn.started_at,
-                    duration_ms,
-                    now,
-                    max_turn_secs,
-                    &session_id,
-                );
-                (e, s, false)
-            }
-        };
+        }
+        _ => {
+            // No transcript (non-Claude-Code agent, or unparseable started_at).
+            let (e, s) = fallback_ended_at(
+                &open_turn.started_at,
+                duration_ms,
+                now,
+                max_turn_secs,
+                &session_id,
+            );
+            (e, s, false)
+        }
+    };
     let effective_duration_secs = if skip_buffer {
         0.0
     } else {
@@ -189,9 +187,8 @@ fn fallback_ended_at(
         DateTime::parse_from_rfc3339(started_at)
             .ok()
             .map(|s| {
-                (s.with_timezone(&Utc)
-                    + chrono::Duration::seconds(agent_duration_secs as i64))
-                .to_rfc3339()
+                (s.with_timezone(&Utc) + chrono::Duration::seconds(agent_duration_secs as i64))
+                    .to_rfc3339()
             })
             .unwrap_or_else(|| now.to_rfc3339())
     } else {
@@ -339,13 +336,8 @@ mod tests {
     fn test_fallback_ended_at_under_cap_uses_now() {
         // Turn took 60s, cap is 7200s → no clamping, ended_at = now.
         let now = utc("2024-01-01T10:01:00Z");
-        let (ended, secs) = fallback_ended_at(
-            "2024-01-01T10:00:00Z",
-            Some(60_000.0),
-            now,
-            7200.0,
-            "sess",
-        );
+        let (ended, secs) =
+            fallback_ended_at("2024-01-01T10:00:00Z", Some(60_000.0), now, 7200.0, "sess");
         assert_eq!(secs, 60.0);
         // ended_at should equal now.
         assert_eq!(ended, now.to_rfc3339());
@@ -375,13 +367,7 @@ mod tests {
     fn test_fallback_ended_at_no_duration_ms_falls_back_to_wall() {
         // No duration_ms → derived from `now - started_at` = 3h → clamps at 2h.
         let now = utc("2024-01-01T13:00:00Z");
-        let (_ended, secs) = fallback_ended_at(
-            "2024-01-01T10:00:00Z",
-            None,
-            now,
-            7200.0,
-            "sess",
-        );
+        let (_ended, secs) = fallback_ended_at("2024-01-01T10:00:00Z", None, now, 7200.0, "sess");
         assert_eq!(secs, 7200.0);
     }
 }

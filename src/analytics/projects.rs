@@ -6,11 +6,7 @@ use crate::{config, db};
 
 use super::{format_duration, sessions_column};
 
-pub fn run(
-    since: Option<&str>,
-    until: Option<&str>,
-    agent_filter: Option<&str>,
-) -> Result<()> {
+pub fn run(since: Option<&str>, until: Option<&str>, agent_filter: Option<&str>) -> Result<()> {
     let cfg = config::load().unwrap_or_default();
     let conn = db::open()?;
     let turns = db::query_turns(&conn, since, until, None, agent_filter)?;

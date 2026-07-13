@@ -893,8 +893,7 @@ mod tests {
         }
 
         // until is exclusive: `< 2024-06-16T00:00:00Z` keeps early + mid.
-        let rows =
-            query_turns(&conn, None, Some("2024-06-16T00:00:00Z"), None, None).unwrap();
+        let rows = query_turns(&conn, None, Some("2024-06-16T00:00:00Z"), None, None).unwrap();
         let ids: Vec<&str> = rows.iter().map(|r| r.session_id.as_str()).collect();
         assert_eq!(ids, vec!["early", "mid"]);
 
@@ -953,10 +952,7 @@ mod tests {
         let rows = unattributed_turns_under(&conn, "/code/limes").unwrap();
         let sessions: Vec<&str> = rows.iter().map(|(_, _, _)| "").collect();
         let _ = sessions; // unused
-        let mut ids: Vec<&str> = rows
-            .iter()
-            .map(|(_, cwd, _)| cwd.as_str())
-            .collect();
+        let mut ids: Vec<&str> = rows.iter().map(|(_, cwd, _)| cwd.as_str()).collect();
         ids.sort();
         assert_eq!(ids, vec!["/code/limes", "/code/limes/sub/dir"]);
     }
@@ -968,7 +964,11 @@ mod tests {
         insert_with_cwd_and_project(&conn, "attributed", "/code/limes", Some("limes"));
 
         let rows = unattributed_turns_under(&conn, "/code/limes").unwrap();
-        assert_eq!(rows.len(), 1, "only the null-project row should be returned");
+        assert_eq!(
+            rows.len(),
+            1,
+            "only the null-project row should be returned"
+        );
     }
 
     #[test]
@@ -1186,7 +1186,10 @@ mod tests {
         let candidates = find_transcript_fix_candidates(&conn, 7200.0).unwrap();
         // Only the first (clamped) is a candidate; the second is under cap.
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].next_start.as_deref(), Some("2024-01-01T14:00:00Z"));
+        assert_eq!(
+            candidates[0].next_start.as_deref(),
+            Some("2024-01-01T14:00:00Z")
+        );
     }
 
     #[test]

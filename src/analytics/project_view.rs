@@ -38,8 +38,13 @@ pub fn run(
     };
 
     for (label, win_since) in &windows {
-        let turns =
-            db::query_turns(&conn, win_since.as_deref(), until, matched_path.as_deref(), None)?;
+        let turns = db::query_turns(
+            &conn,
+            win_since.as_deref(),
+            until,
+            matched_path.as_deref(),
+            None,
+        )?;
         let turns = filter_by_name(&turns, project_name, matched_path.as_deref());
         let wall = wall_clock_secs(&turns, cfg.tracking.human_buffer_secs);
         let agent = agent_secs(&turns);
@@ -185,11 +190,8 @@ fn filter_by_name(
 }
 
 fn render_mini_graph(turns: &[crate::db::TurnRow], cfg: &config::Config) {
-    let by_day = super::compute_daily_contributions(
-        turns,
-        &chrono::Local,
-        cfg.tracking.human_buffer_secs,
-    );
+    let by_day =
+        super::compute_daily_contributions(turns, &chrono::Local, cfg.tracking.human_buffer_secs);
 
     let max_secs: f64 = by_day
         .values()

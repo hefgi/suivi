@@ -130,7 +130,9 @@ fn run_fix_outliers(yes: bool) -> Result<()> {
             &o.started_at[..o.started_at.len().min(19)],
             project_short,
             format_secs(o.agent_duration_secs),
-            wall_secs.map(format_secs).unwrap_or_else(|| "?".to_string()),
+            wall_secs
+                .map(format_secs)
+                .unwrap_or_else(|| "?".to_string()),
             format_secs(cap),
         );
     }
@@ -273,7 +275,11 @@ fn run_fix_from_transcripts(yes: bool) -> Result<()> {
         println!();
         println!(
             "{}",
-            format!("Total phantom time reclaimable: {}", format_secs(total_saved)).bold()
+            format!(
+                "Total phantom time reclaimable: {}",
+                format_secs(total_saved)
+            )
+            .bold()
         );
         println!();
     }
@@ -383,10 +389,7 @@ fn run_prune_excluded(yes: bool) -> Result<()> {
     // Single statement deletion — we already know each cwd matches.
     let mut deleted = 0usize;
     for (cwd, _) in &rows {
-        let n = conn.execute(
-            "DELETE FROM turns WHERE cwd = ?1",
-            rusqlite::params![cwd],
-        )?;
+        let n = conn.execute("DELETE FROM turns WHERE cwd = ?1", rusqlite::params![cwd])?;
         deleted += n;
     }
     println!(
