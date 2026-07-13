@@ -10,6 +10,9 @@ use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 
 use crate::db::TurnRow;
 
+/// A half-open time interval in UTC. Used across daily-attribution helpers.
+pub type UtcInterval = (DateTime<Utc>, DateTime<Utc>);
+
 // ── Timezone handling ─────────────────────────────────────────────────────────
 //
 // Timestamps are stored as UTC RFC3339, but "a day" means a day in the user's
@@ -160,7 +163,7 @@ pub fn turn_day_contribution<Tz: TimeZone>(
     day: NaiveDate,
     tz: &Tz,
     buffer_secs: u32,
-) -> Option<((DateTime<Utc>, DateTime<Utc>), f64)> {
+) -> Option<(UtcInterval, f64)> {
     let ended = turn.ended_at.as_ref()?;
     let start = DateTime::parse_from_rfc3339(&turn.started_at)
         .ok()?
@@ -213,8 +216,7 @@ where
     Tz::Offset: std::fmt::Display,
 {
     use std::collections::BTreeMap;
-    let mut intervals_by_day: BTreeMap<NaiveDate, Vec<(DateTime<Utc>, DateTime<Utc>)>> =
-        BTreeMap::new();
+    let mut intervals_by_day: BTreeMap<NaiveDate, Vec<UtcInterval>> = BTreeMap::new();
     let mut agent_by_day: BTreeMap<NaiveDate, f64> = BTreeMap::new();
 
     let buffer = Duration::seconds(buffer_secs as i64);

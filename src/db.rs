@@ -272,6 +272,7 @@ pub fn find_outlier_turns(
 ///   - agent_duration_secs ← MIN(current, cap_secs)
 ///   - effective_duration_secs ← 2 * buffer_secs + new agent_duration_secs
 ///   - ended_at ← started_at + new agent_duration_secs
+///
 /// Returns the number of rows modified.
 pub fn clamp_outliers(
     conn: &Connection,

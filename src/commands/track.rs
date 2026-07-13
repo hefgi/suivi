@@ -125,10 +125,10 @@ fn backfill(conn: &Connection, cfg: &Config, new_abs: &Path) -> Result<BackfillS
         count += 1;
 
         if let Some(day) = analytics::local_day_key(&started_at) {
-            if first_day.as_ref().map_or(true, |f| &day < f) {
+            if first_day.as_ref().is_none_or(|f| &day < f) {
                 first_day = Some(day.clone());
             }
-            if last_day.as_ref().map_or(true, |l| &day > l) {
+            if last_day.as_ref().is_none_or(|l| &day > l) {
                 last_day = Some(day);
             }
         }

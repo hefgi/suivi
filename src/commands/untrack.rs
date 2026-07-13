@@ -80,10 +80,8 @@ fn resolve_target(cfg: &Config, target: &str) -> Result<usize> {
         }
         // Also accept a literal string match against the stored path
         // (covers untrack of a now-deleted directory).
-        if entry.path == raw_target {
-            if !path_matches.contains(&i) {
-                path_matches.push(i);
-            }
+        if entry.path == raw_target && !path_matches.contains(&i) {
+            path_matches.push(i);
         }
     }
 

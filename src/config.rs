@@ -571,14 +571,15 @@ paths = ["/a", "/b", "/c"]
     }
 
     fn empty_config_with_excludes(paths: &[&str]) -> Config {
-        let mut cfg = Config::default();
-        cfg.exclude = paths
-            .iter()
-            .map(|p| ExcludeEntry {
-                path: p.to_string(),
-            })
-            .collect();
-        cfg
+        Config {
+            exclude: paths
+                .iter()
+                .map(|p| ExcludeEntry {
+                    path: p.to_string(),
+                })
+                .collect(),
+            ..Config::default()
+        }
     }
 
     #[test]
